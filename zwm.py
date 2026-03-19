@@ -735,7 +735,16 @@ class TilingWM:
         os.execvp(sys.executable, [sys.executable] + sys.argv)
 
     def action_quit(self):
+        """Stop the WM and terminate the X session."""
         self._running = False
+        # Destroy our decorations
+        for ws in self.workspaces:
+            for tile in ws.all_tiles():
+                self._destroy_tab_bar(tile)
+                self._destroy_frame(tile)
+        self.dpy.close()
+        # Kill the X session entirely
+        os.kill(os.getpid(), signal.SIGTERM)
 
     # ----- manage / unmanage -----
 
