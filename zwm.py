@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ZWM — A tabbed tiling window manager inspired by Notion WM and TinyWM.
+ZWM — A tabbed tiling window manager inspired by Notion and TinyWM.
 """
 import signal
 import subprocess
