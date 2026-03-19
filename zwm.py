@@ -67,7 +67,7 @@ BAR_UPDATE_INTERVAL = 2.0    # seconds between status redraws
 
 # Status-bar colours
 COL_BAR_BG          = "#1E1E1E"
-COL_BAR_FG          = "#AAAAAA"
+COL_BAR_FG          = "#FFBF00"
 COL_BAR_WS_ACTIVE   = "#fbe7ac"   # active workspace indicator
 COL_BAR_WS_INACTIVE = "#555555"   # inactive workspace indicator
 COL_BAR_WS_OCCUPIED = "#888888"   # has windows but not focused
@@ -353,7 +353,7 @@ class TilingWM:
             X.CopyFromParent,
             background_pixel=self._px(COL_BAR_BG),
             override_redirect=True,
-            event_mask=X.ExposureMask | X.ButtonPressMask,
+            event_mask=X.ExposureMask | X.ButtonPressMask | X.ButtonReleaseMask,
         )
         self._status_bar_win = win
         win.configure(stack_mode=X.Above)
@@ -415,7 +415,37 @@ class TilingWM:
             s.close()
             return ip
         except Exception:
-            return "no ip"
+            return "disconnected"
+
+    @staticmethod
+    def _bar_read_volume():
+        """Return master volume percentage, or -1 if unavailable."""
+        try:
+            out = subprocess.check_output(
+                ["amixer", "get", "Master"],
+                stderr=subprocess.DEVNULL, timeout=1
+            ).decode()
+            # Find the last [XX%] in output
+            for line in reversed(out.splitlines()):
+                i = line.find("[")
+                j = line.find("%]")
+                if i != -1 and j != -1:
+                    return int(line[i + 1 : j])
+        except Exception:
+            pass
+        return -1
+
+    def _bar_set_volume(self, delta):
+        """Adjust master volume by delta percent and redraw."""
+        try:
+            arg = f"{abs(delta)}%{'+' if delta > 0 else '-'}"
+            subprocess.Popen(
+                ["amixer", "set", "Master", arg],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+        except Exception:
+            pass
+        self._bar_draw()
 
     def _bar_draw(self):
         """Render the status bar — double-buffered."""
@@ -472,8 +502,9 @@ class TilingWM:
         ram_pct = self._bar_read_ram()
         ip_str = self._bar_read_ip()
         now = time.strftime("%a %b %d  %H:%M")
-
-        status = f"CPU {self._cpu_pct:.0f}%   RAM {ram_pct:.0f}%   {ip_str}   {now}"
+        vol = self._bar_read_volume()
+        vol_str = f"VOL {vol}%" if vol >= 0 else "VOL ?"
+        status = f"{vol_str}   CPU {self._cpu_pct:.0f}%   RAM {ram_pct:.0f}%   {ip_str}   {now}"
         status_bytes = status.encode("latin-1", errors="replace")
 
         # Approximate text width: ~7px per char for fixed font
@@ -493,7 +524,15 @@ class TilingWM:
         self.dpy.flush()
 
     def _bar_handle_click(self, ev):
-        """Handle a click on the status bar — switch workspace if on an indicator."""
+        """Handle clicks/scroll on the status bar."""
+        # Scroll wheel: Button4 = up, Button5 = down
+        if ev.detail == 4:
+            self._bar_set_volume(5)
+            return
+        if ev.detail == 5:
+            self._bar_set_volume(-5)
+            return
+
         pad = 6
         ws_w = 22
         ws_gap = 3
@@ -579,7 +618,7 @@ class TilingWM:
         if n == 0:
             if is_active:
                 gc_txt = pm.create_gc(foreground=self._px("#FFFFFF"), font=self.font)
-                pm.draw_text(gc_txt, 6, h // 2 + 4, b"(empty)")
+                pm.draw_text(gc_txt, 6, h // 2 + 4, b"...")
                 gc_txt.free()
         else:
             tab_w = max(1, w // n)
