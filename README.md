@@ -1,6 +1,6 @@
-# zwm
+#ZWM 
 
-ZWM - tabbed manual tiling window manager inspired by Notion WM by https://notionwm.net/ https://github.com/raboof/notion and TinyWM by Nick Welch http://incise.org/tinywm.html
+Tabbed manual tiling window manager inspired by Notion WM by https://notionwm.net/ https://github.com/raboof/notion and TinyWM by Nick Welch http://incise.org/tinywm.html
 
 Depends:
   python-xlib
