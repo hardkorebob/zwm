@@ -353,7 +353,7 @@ class TilingWM:
             tile.tab_bar_win = None
 
     def _draw_tab_bar(self, tile):
-        """Render the tab labels onto *tile*'s tab-bar window."""
+        """Render tab labels — double-buffered to prevent flicker."""
         if tile.tab_bar_win is None:
             return
         win = tile.tab_bar_win
@@ -363,45 +363,51 @@ class TilingWM:
         is_active = (tile is self.ws.active_tile)
         bar_bg = COL_BORDER_ACTIVE if is_active else COL_TAB_BAR_BG
 
-        # Clear
-        gc_bg = win.create_gc(foreground=self._px(bar_bg))
-        win.fill_rectangle(gc_bg, 0, 0, w, h)
+        # Draw everything to an offscreen pixmap first
+        pm = win.create_pixmap(w, h, self.screen.root_depth)
+
+        gc_bg = pm.create_gc(foreground=self._px(bar_bg))
+        pm.fill_rectangle(gc_bg, 0, 0, w, h)
         gc_bg.free()
 
         n = len(tile.windows)
         if n == 0:
             if is_active:
-                gc_txt = win.create_gc(foreground=self._px("#DDDDDD"), font=self.font)
-                win.draw_text(gc_txt, 6, h // 2 + 4, b"...")
+                gc_txt = pm.create_gc(foreground=self._px("#FFFFFF"), font=self.font)
+                pm.draw_text(gc_txt, 6, h // 2 + 4, b"(empty)")
                 gc_txt.free()
-            self.dpy.flush()
-            return
+        else:
+            tab_w = max(1, w // n)
+            for i, wid in enumerate(tile.windows):
+                is_tab_active = (i == tile.active_tab)
+                bg = COL_TAB_ACTIVE_BG if is_tab_active else COL_TAB_INACTIVE_BG
+                fg = COL_TAB_ACTIVE_FG if is_tab_active else COL_TAB_INACTIVE_FG
 
-        tab_w = max(1, w // n)
-        for i, wid in enumerate(tile.windows):
-            is_tab_active = (i == tile.active_tab)
-            bg = COL_TAB_ACTIVE_BG if is_tab_active else COL_TAB_INACTIVE_BG
-            fg = COL_TAB_ACTIVE_FG if is_tab_active else COL_TAB_INACTIVE_FG
+                x0 = i * tab_w
+                tw = tab_w if i < n - 1 else (w - x0)
 
-            x0 = i * tab_w
-            tw = tab_w if i < n - 1 else (w - x0)
+                gc = pm.create_gc(foreground=self._px(bg))
+                pm.fill_rectangle(gc, x0, 0, tw, h)
+                gc.free()
 
-            gc = win.create_gc(foreground=self._px(bg))
-            win.fill_rectangle(gc, x0, 0, tw, h)
-            gc.free()
+                if i < n - 1:
+                    gc_sep = pm.create_gc(foreground=self._px(bar_bg))
+                    pm.fill_rectangle(gc_sep, x0 + tw - 1, 0, 1, h)
+                    gc_sep.free()
 
-            if i < n - 1:
-                gc_sep = win.create_gc(foreground=self._px(bar_bg))
-                win.fill_rectangle(gc_sep, x0 + tw - 1, 0, 1, h)
-                gc_sep.free()
+                title = self._get_wm_name(wid)
+                if len(title) > 20:
+                    title = title[:18] + ".."
+                gc_txt = pm.create_gc(foreground=self._px(fg), font=self.font)
+                pm.draw_text(gc_txt, x0 + 6, h // 2 + 4,
+                             title.encode("latin-1", errors="replace"))
+                gc_txt.free()
 
-            title = self._get_wm_name(wid)
-            if len(title) > 20:
-                title = title[:18] + ".."
-            gc_txt = win.create_gc(foreground=self._px(fg), font=self.font)
-            text_y = h // 2 + 4
-            win.draw_text(gc_txt, x0 + 6, text_y, title.encode("latin-1", errors="replace"))
-            gc_txt.free()
+        # Single
+        gc_copy = win.create_gc()
+        win.copy_area(gc_copy, pm, 0, 0, w, h, 0, 0)
+        gc_copy.free()
+        pm.free()
 
         self.dpy.flush()
 
