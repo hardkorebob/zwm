@@ -61,7 +61,7 @@ F7_LAUNCHER_CMD = "dmenu_run"
 
 # Bar reservation — built-in status bar.
 # "top" or "bottom";  set BAR_HEIGHT = 0 to disable.
-BAR_POSITION = "bottom"      # "top" | "bottom"
+BAR_POSITION = "top"      # "top" | "bottom"
 BAR_HEIGHT   = 24            # pixels reserved for the bar
 BAR_UPDATE_INTERVAL = 2.0    # seconds between status redraws
 
@@ -755,6 +755,14 @@ class TilingWM:
 
     # ----- public actions -----
 
+    def action_next_workspace(self):
+        n = (self.current_ws + 1) % NUM_WORKSPACES
+        self.action_switch_workspace(n)
+
+    def action_prev_workspace(self):
+        n = (self.current_ws - 1) % NUM_WORKSPACES
+        self.action_switch_workspace(n)
+
     def action_move_tab_forward(self):
         """Swap active tab with the next one."""
         tile = self.ws.active_tile
@@ -1148,6 +1156,13 @@ class TilingWM:
         keysym = self.dpy.keycode_to_keysym(ev.detail, 0)
         shifted = bool(ev.state & X.ShiftMask)
 
+        if keysym == XK.XK_F3:
+            self.action_prev_workspace()
+            return
+        if keysym == XK.XK_F4:
+            self.action_next_workspace()
+            return
+
         # Mod4+r — restart WM (reload code changes)
         if keysym == XK.XK_r:
             self.action_restart()
@@ -1172,7 +1187,7 @@ class TilingWM:
             self.action_spawn(FM_CMD)
             return
 
-        if keysym == XK.XK_F10:
+        if keysym == XK.XK_F9:
             self.action_spawn(WWW_CMD)
             return
 
@@ -1266,43 +1281,12 @@ class TilingWM:
                                   X.ButtonPressMask, X.GrabModeSync, X.GrabModeAsync,
                                   X.NONE, X.NONE)
 
-        f1_kc = self.dpy.keysym_to_keycode(XK.string_to_keysym("F1"))
-        if f1_kc:
-            for mod in (0, X.Mod2Mask, X.LockMask, X.Mod2Mask | X.LockMask):
-                self.root_win.grab_key(f1_kc, mod, True,
-                                       X.GrabModeAsync, X.GrabModeAsync)
-
-        f2_kc = self.dpy.keysym_to_keycode(XK.string_to_keysym("F2"))
-        if f2_kc:
-            for mod in (0, X.Mod2Mask, X.LockMask, X.Mod2Mask | X.LockMask):
-                self.root_win.grab_key(f2_kc, mod, True,
-                                       X.GrabModeAsync, X.GrabModeAsync)
-
-
-        f6_kc = self.dpy.keysym_to_keycode(XK.string_to_keysym("F6"))
-        if f6_kc:
-            for mod in (0, X.Mod2Mask, X.LockMask, X.Mod2Mask | X.LockMask):
-                self.root_win.grab_key(f6_kc, mod, True,
-                                       X.GrabModeAsync, X.GrabModeAsync)
-
-        f7_kc = self.dpy.keysym_to_keycode(XK.string_to_keysym("F7"))
-        if f7_kc:
-            for mod in (0, X.Mod2Mask, X.LockMask, X.Mod2Mask | X.LockMask):
-                self.root_win.grab_key(f7_kc, mod, True,
-                                       X.GrabModeAsync, X.GrabModeAsync)
-
-        f8_kc = self.dpy.keysym_to_keycode(XK.string_to_keysym("F8"))
-        if f8_kc:
-            for mod in (0, X.Mod2Mask, X.LockMask, X.Mod2Mask | X.LockMask):
-                self.root_win.grab_key(f8_kc, mod, True,
-                                       X.GrabModeAsync, X.GrabModeAsync)
-
-        f10_kc = self.dpy.keysym_to_keycode(XK.string_to_keysym("F10"))
-        if f10_kc:
-            for mod in (0, X.Mod2Mask, X.LockMask, X.Mod2Mask | X.LockMask):
-                self.root_win.grab_key(f10_kc, mod, True,
-                                       X.GrabModeAsync, X.GrabModeAsync)
-
+        for fkey in ("F1", "F2", "F3", "F4", "F6", "F7", "F8", "F9"):
+            kc = self.dpy.keysym_to_keycode(XK.string_to_keysym(fkey))
+            if kc:
+                for mod in (0, X.Mod2Mask, X.LockMask, X.Mod2Mask | X.LockMask):
+                    self.root_win.grab_key(kc, mod, True,
+                                           X.GrabModeAsync, X.GrabModeAsync)
 
 
     # ----- main loop -----
