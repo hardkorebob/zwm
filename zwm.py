@@ -31,7 +31,7 @@ Keybindings (Mod4 = Super):
 Mouse:
   Click tab bar      Activate that tab
 """
-
+import signal
 import subprocess
 import sys
 import os
@@ -44,16 +44,16 @@ from Xlib.protocol import event as xevent
 
 TAB_BAR_HEIGHT = 22
 BORDER_WIDTH = 1          # coloured border around each tile
-BORDER_GAP = 1            # gap between tiles
+BORDER_GAP = 2            # gap between tiles
 NUM_WORKSPACES = 9
 TERMINAL_CMD = "xterm"
-
-# External launcher invoked by F7 (change to your preferred launcher)
+FM_CMD = "thunar"
+WWW_CMD = "firefox"
 F7_LAUNCHER_CMD = "dmenu_run"
 
 # Bar reservation — set for polybar or any external bar.
 # "top" or "bottom";  set BAR_HEIGHT = 0 to disable.
-BAR_POSITION = "top"      # "top" | "bottom"
+BAR_POSITION = "bottom"      # "top" | "bottom"
 BAR_HEIGHT   = 24          # pixels reserved for the bar
 
 # Hex colours
@@ -62,9 +62,9 @@ COL_TAB_INACTIVE_BG = "#3C3C3C"
 COL_TAB_ACTIVE_FG   = "#000000"
 COL_TAB_INACTIVE_FG = "#AAAAAA"
 COL_TAB_BAR_BG      = "#2B2B2B"
-COL_BORDER_ACTIVE   = "#000000"   # black highlight on active tile
+COL_BORDER_ACTIVE   = "#696969"   # black highlight on active tile
 COL_BORDER_INACTIVE = "#1E1E1E"   # nearly invisible when not focused
-COL_DESKTOP_BG      = "#696969"
+COL_DESKTOP_BG      = "#000000"
 
 # Tree nodes
 
@@ -352,6 +352,7 @@ class TilingWM:
             self._tab_bars.discard(wid)
             tile.tab_bar_win = None
 
+
     def _draw_tab_bar(self, tile):
         """Render tab labels — double-buffered to prevent flicker."""
         if tile.tab_bar_win is None:
@@ -410,7 +411,6 @@ class TilingWM:
         pm.free()
 
         self.dpy.flush()
-
     # ----- tile arrangement -----
     def _arrange_tile(self, tile):
         """Configure all client windows in *tile* and refresh decorations."""
@@ -664,7 +664,38 @@ class TilingWM:
         self._arrange_tile(tile)
 
     def action_spawn(self, cmd):
-        subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, 
+                         preexec_fn=os.setsid)
+
+    def action_close_window(self):
+        """Close the active window in the current tile."""
+        tile = self.ws.active_tile
+        if not tile.windows:
+            return
+        wid = tile.windows[tile.active_tab]
+        win = self.dpy.create_resource_object("window", wid)
+
+        # Try WM_DELETE_WINDOW (polite close) first
+        try:
+            wm_protocols = self.dpy.intern_atom("WM_PROTOCOLS")
+            wm_delete = self.dpy.intern_atom("WM_DELETE_WINDOW")
+            prop = win.get_full_property(wm_protocols, Xatom.ATOM)
+            if prop and wm_delete in prop.value:
+                # Send a ClientMessage asking the app to close
+                from Xlib.protocol.event import ClientMessage
+                ev = ClientMessage(
+                    window=win,
+                    client_type=wm_protocols,
+                    data=(32, [wm_delete, X.CurrentTime, 0, 0, 0]),
+                )
+                win.send_event(ev)
+                self.dpy.flush()
+                return
+        except Exception:
+            pass
+
+        # Fallback: force kill
+        win.destroy()
 
     def action_restart(self):
         """Re-exec the WM process. All client windows survive."""
@@ -840,6 +871,11 @@ class TilingWM:
             self.action_restart()
             return
 
+        # F6 — close active tab/window
+        if keysym == XK.XK_F6:
+            self.action_close_window()
+            return
+
         # F7 — launch external program (no modifier required)
         if keysym == XK.XK_F7:
             self.action_spawn(F7_LAUNCHER_CMD)
@@ -848,6 +884,14 @@ class TilingWM:
         # Mod4+Return — spawn terminal
         if keysym == XK.XK_Return:
             self.action_spawn(TERMINAL_CMD)
+            return
+
+        if keysym == XK.XK_F8:
+            self.action_spawn(FM_CMD)
+            return
+
+        if keysym == XK.XK_F10:
+            self.action_spawn(WWW_CMD)
             return
 
         # Mod4+h / Mod4+Shift+h — horizontal split (shift = move window too)
@@ -936,10 +980,28 @@ class TilingWM:
                 self.root_win.grab_key(f1_kc, mod, True,
                                        X.GrabModeAsync, X.GrabModeAsync)
 
+        f6_kc = self.dpy.keysym_to_keycode(XK.string_to_keysym("F6"))
+        if f6_kc:
+            for mod in (0, X.Mod2Mask, X.LockMask, X.Mod2Mask | X.LockMask):
+                self.root_win.grab_key(f6_kc, mod, True,
+                                       X.GrabModeAsync, X.GrabModeAsync)
+
         f7_kc = self.dpy.keysym_to_keycode(XK.string_to_keysym("F7"))
         if f7_kc:
             for mod in (0, X.Mod2Mask, X.LockMask, X.Mod2Mask | X.LockMask):
                 self.root_win.grab_key(f7_kc, mod, True,
+                                       X.GrabModeAsync, X.GrabModeAsync)
+
+        f10_kc = self.dpy.keysym_to_keycode(XK.string_to_keysym("F10"))
+        if f10_kc:
+            for mod in (0, X.Mod2Mask, X.LockMask, X.Mod2Mask | X.LockMask):
+                self.root_win.grab_key(f10_kc, mod, True,
+                                       X.GrabModeAsync, X.GrabModeAsync)
+
+        f8_kc = self.dpy.keysym_to_keycode(XK.string_to_keysym("F8"))
+        if f8_kc:
+            for mod in (0, X.Mod2Mask, X.LockMask, X.Mod2Mask | X.LockMask):
+                self.root_win.grab_key(f8_kc, mod, True,
                                        X.GrabModeAsync, X.GrabModeAsync)
 
     # ----- main loop -----
@@ -1007,6 +1069,7 @@ class TilingWM:
         self.dpy.close()
 
 def main():
+    signal.signal(signal.SIGCHLD, signal.SIG_IGN)
     wm = TilingWM()
     bg_px = wm._px(COL_DESKTOP_BG)
     wm.root_win.change_attributes(background_pixel=bg_px)
