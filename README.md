@@ -15,6 +15,8 @@ Features:
                
   • Static:    Tiles only change when the user explicitly splits or removes
                a frame — no automatic rearrangement.
+
+  • Bar:       Integrated status bar
                
   • Workspaces: 9 independent workspaces, each with its own tile tree.
 
@@ -54,11 +56,4 @@ Mouse:
 
   Click tab bar      Activate that tab
   
-
-Bar reservation (polybar):
-
-  Set BAR_POSITION to "top" or "bottom" and BAR_HEIGHT to the bar's
-  pixel height. The WM reserves that strip and never tiles into it.
-  Polybar (or any bar using _NET_WM_STRUT*) is auto-detected and
-  excluded from tiling.
 
