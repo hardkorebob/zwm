@@ -130,12 +130,16 @@ static int           n_colors;
 /* Cached atoms */
 static Atom a_net_wm_name, a_utf8, a_wm_protocols, a_wm_delete;
 static Atom a_strut, a_strut_partial, a_wm_type, a_wm_type_dock;
+static Atom a_net_wm_state, a_net_wm_state_fullscreen;
 
 /* For restart */
 static char **saved_argv;
 
 /* EWMH check window */
 static Window ewmh_check_win;
+
+/* Fullscreen tracking */
+static Window fullscreen_win;   /* currently fullscreened window, or None */
 
 /* ===== Utility: colour cache ===== */
 
@@ -417,6 +421,19 @@ static void init_ewmh(void)
                     PropModeReplace, (unsigned char *)"ZWM", 3);
 
     /* Do NOT map — the check window must stay hidden */
+
+    /* Advertise supported EWMH features */
+    Atom net_supported = XInternAtom(dpy, "_NET_SUPPORTED", False);
+    Atom supported[] = {
+        a_net_wm_state,
+        a_net_wm_state_fullscreen,
+        a_net_wm_name,
+        supporting,
+    };
+    XChangeProperty(dpy, root_win, net_supported, XA_ATOM, 32,
+                    PropModeReplace, (unsigned char *)supported,
+                    (int)(sizeof(supported) / sizeof(supported[0])));
+
     XFlush(dpy);
 }
 
@@ -426,6 +443,66 @@ static void cleanup_ewmh(void)
         XDestroyWindow(dpy, ewmh_check_win);
         ewmh_check_win = None;
     }
+}
+
+/* ===== Fullscreen support ===== */
+
+static void fullscreen_enter(Window wid)
+{
+    if (fullscreen_win != None) return;   /* already fullscreened */
+    fullscreen_win = wid;
+
+    /* Set the EWMH state property on the window */
+    XChangeProperty(dpy, wid, a_net_wm_state, XA_ATOM, 32,
+                    PropModeReplace, (unsigned char *)&a_net_wm_state_fullscreen, 1);
+
+    /* Hide bar, tab bars, frames */
+    if (status_bar_win != None) XUnmapWindow(dpy, status_bar_win);
+    Node *tiles[MAX_TILES];
+    int n = collect_tiles(ws()->root, tiles, MAX_TILES);
+    for (int i = 0; i < n; i++) {
+        if (tiles[i]->tile.tab_bar_win != None) XUnmapWindow(dpy, tiles[i]->tile.tab_bar_win);
+        if (tiles[i]->tile.frame_win   != None) XUnmapWindow(dpy, tiles[i]->tile.frame_win);
+        /* Hide other client windows */
+        for (int j = 0; j < tiles[i]->tile.nwindows; j++)
+            if (tiles[i]->tile.windows[j] != wid)
+                XUnmapWindow(dpy, tiles[i]->tile.windows[j]);
+    }
+
+    /* Resize window to cover the entire screen */
+    XMoveResizeWindow(dpy, wid, 0, 0, (unsigned)sw, (unsigned)sh);
+    XRaiseWindow(dpy, wid);
+    XSetInputFocus(dpy, wid, RevertToParent, CurrentTime);
+    XFlush(dpy);
+}
+
+static void fullscreen_exit(Window wid)
+{
+    if (fullscreen_win == None || fullscreen_win != wid) return;
+    fullscreen_win = None;
+
+    /* Remove the EWMH state property */
+    XChangeProperty(dpy, wid, a_net_wm_state, XA_ATOM, 32,
+                    PropModeReplace, (unsigned char *)NULL, 0);
+
+    /* Restore bar */
+    if (status_bar_win != None) {
+        XMapWindow(dpy, status_bar_win);
+        XRaiseWindow(dpy, status_bar_win);
+    }
+
+    /* Re-arrange the whole workspace — restores all tiles, frames, tab bars */
+    arrange_workspace(ws());
+    focus_tile(ws()->active_tile);
+    bar_draw();
+}
+
+static void fullscreen_toggle(Window wid)
+{
+    if (fullscreen_win == wid)
+        fullscreen_exit(wid);
+    else
+        fullscreen_enter(wid);
 }
 
 /* ===== Frame (border) management ===== */
@@ -946,6 +1023,23 @@ static void manage_window(Window wid)
     arrange_tile(tile);
     focus_tile(tile);
     bar_draw();
+
+    /* Check if the window is already requesting fullscreen */
+    {
+        Atom type; int fmt; unsigned long ni, after; unsigned char *data = NULL;
+        if (XGetWindowProperty(dpy, wid, a_net_wm_state, 0, 32, False,
+                XA_ATOM, &type, &fmt, &ni, &after, &data) == Success && data && ni > 0) {
+            Atom *atoms = (Atom *)data;
+            for (unsigned long i = 0; i < ni; i++) {
+                if (atoms[i] == a_net_wm_state_fullscreen) {
+                    XFree(data);
+                    fullscreen_enter(wid);
+                    return;
+                }
+            }
+            XFree(data);
+        } else if (data) { XFree(data); }
+    }
 }
 
 static void unmanage_window(Window wid)
@@ -955,6 +1049,15 @@ static void unmanage_window(Window wid)
     if (idx < 0) return;
     int ws_idx = managed[idx].ws;
     managed_del(wid);
+
+    /* If this was the fullscreen window, restore normal state */
+    if (fullscreen_win == wid) {
+        fullscreen_win = None;
+        if (status_bar_win != None) {
+            XMapWindow(dpy, status_bar_win);
+            XRaiseWindow(dpy, status_bar_win);
+        }
+    }
 
     Workspace *w = &workspaces[ws_idx];
     Node *tile = ws_find_tile(w, wid);
@@ -972,6 +1075,7 @@ static void unmanage_window(Window wid)
 void action_switch_workspace(int n)
 {
     if (n == cur_ws) return;
+    if (fullscreen_win != None) fullscreen_exit(fullscreen_win);
     hide_workspace(ws());
     cur_ws = n;
     arrange_workspace(ws());
@@ -1327,6 +1431,29 @@ static void on_property_notify(XEvent *ev)
     }
 }
 
+static void on_client_message(XEvent *ev)
+{
+    XClientMessageEvent *cm = &ev->xclient;
+
+    if (cm->message_type == a_net_wm_state && cm->format == 32) {
+        long action = cm->data.l[0];   /* 0=remove, 1=add, 2=toggle */
+        Atom prop1  = (Atom)cm->data.l[1];
+        Atom prop2  = (Atom)cm->data.l[2];
+
+        if (prop1 == a_net_wm_state_fullscreen || prop2 == a_net_wm_state_fullscreen) {
+            Window wid = cm->window;
+            if (managed_find(wid) < 0) return;
+
+            if (action == 2)        /* _NET_WM_STATE_TOGGLE */
+                fullscreen_toggle(wid);
+            else if (action == 1)   /* _NET_WM_STATE_ADD */
+                fullscreen_enter(wid);
+            else                    /* _NET_WM_STATE_REMOVE */
+                fullscreen_exit(wid);
+        }
+    }
+}
+
 static void on_key_press(XEvent *ev)
 {
     KeySym ks = XLookupKeysym(&ev->xkey, 0);
@@ -1447,6 +1574,8 @@ int main(int argc, char **argv)
     a_strut_partial  = XInternAtom(dpy, "_NET_WM_STRUT_PARTIAL", False);
     a_wm_type        = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
     a_wm_type_dock   = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DOCK", False);
+    a_net_wm_state   = XInternAtom(dpy, "_NET_WM_STATE", False);
+    a_net_wm_state_fullscreen = XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False);
 
     /* Workspaces */
     for (int i = 0; i < NUM_WORKSPACES; i++) {
@@ -1459,6 +1588,7 @@ int main(int argc, char **argv)
     cur_ws = 0;
     desktop_wid = None;
     status_bar_win = None;
+    fullscreen_win = None;
     running = 1;
 
     /* Desktop background */
@@ -1523,6 +1653,7 @@ int main(int argc, char **argv)
                     XAllowEvents(dpy, ReplayPointer, CurrentTime);
                     break;
                 case PropertyNotify:    on_property_notify(&ev); break;
+                case ClientMessage:     on_client_message(&ev); break;
             }
         }
 
