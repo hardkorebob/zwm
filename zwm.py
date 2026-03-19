@@ -41,6 +41,9 @@ import subprocess
 import sys
 import os
 import struct
+import time
+import socket
+import select
 from Xlib.display import Display
 from Xlib import X, XK, Xatom
 from Xlib.protocol import event as xevent
@@ -56,10 +59,20 @@ FM_CMD = "thunar"
 WWW_CMD = "firefox"
 F7_LAUNCHER_CMD = "dmenu_run"
 
-# Bar reservation — set for polybar or any external bar.
+# Bar reservation — built-in status bar.
 # "top" or "bottom";  set BAR_HEIGHT = 0 to disable.
 BAR_POSITION = "bottom"      # "top" | "bottom"
-BAR_HEIGHT   = 24          # pixels reserved for the bar
+BAR_HEIGHT   = 24            # pixels reserved for the bar
+BAR_UPDATE_INTERVAL = 2.0    # seconds between status redraws
+
+# Status-bar colours
+COL_BAR_BG          = "#1E1E1E"
+COL_BAR_FG          = "#AAAAAA"
+COL_BAR_WS_ACTIVE   = "#fbe7ac"   # active workspace indicator
+COL_BAR_WS_INACTIVE = "#555555"   # inactive workspace indicator
+COL_BAR_WS_OCCUPIED = "#888888"   # has windows but not focused
+COL_BAR_WS_FG_ACT   = "#000000"
+COL_BAR_WS_FG_INACT = "#AAAAAA"
 
 # Hex colours
 COL_TAB_ACTIVE_BG   = "#fbe7ac"
@@ -235,7 +248,17 @@ class TilingWM:
         self._drag_start = None
         self._drag_attr = None
 
+        # Built-in status bar state
+        self._status_bar_win = None
+        self._prev_cpu = None       # (idle, total) from last /proc/stat read
+        self._cpu_pct = 0.0
+        self._last_bar_update = 0.0
+
         self._running = True
+
+        # Create the integrated status bar
+        if BAR_HEIGHT > 0:
+            self._bar_init()
 
     # ----- colours -----
     def _px(self, hexcol):
@@ -313,6 +336,183 @@ class TilingWM:
                 pass
             self._frame_wins.discard(wid)
             tile.frame_win = None
+
+    # ----- integrated status bar -----
+
+    def _bar_init(self):
+        """Create the status bar override-redirect window."""
+        if BAR_POSITION == "top":
+            by = 0
+        else:
+            by = self.sh - BAR_HEIGHT
+
+        win = self.root_win.create_window(
+            0, by, self.sw, BAR_HEIGHT, 0,
+            self.screen.root_depth,
+            X.InputOutput,
+            X.CopyFromParent,
+            background_pixel=self._px(COL_BAR_BG),
+            override_redirect=True,
+            event_mask=X.ExposureMask | X.ButtonPressMask,
+        )
+        self._status_bar_win = win
+        win.configure(stack_mode=X.Above)
+        win.map()
+        # Seed CPU tracking
+        self._prev_cpu = self._read_proc_cpu_raw()
+        self._bar_draw()
+
+    def _read_proc_cpu_raw(self):
+        """Return (idle_ticks, total_ticks) from /proc/stat."""
+        try:
+            with open("/proc/stat") as f:
+                parts = f.readline().split()
+            # user nice system idle iowait irq softirq steal
+            vals = [int(v) for v in parts[1:9]]
+            idle = vals[3] + vals[4]   # idle + iowait
+            total = sum(vals)
+            return (idle, total)
+        except Exception:
+            return (0, 0)
+
+    def _bar_read_cpu(self):
+        """Compute CPU% since last call."""
+        cur = self._read_proc_cpu_raw()
+        if self._prev_cpu is None:
+            self._prev_cpu = cur
+            return 0.0
+        d_idle = cur[0] - self._prev_cpu[0]
+        d_total = cur[1] - self._prev_cpu[1]
+        self._prev_cpu = cur
+        if d_total == 0:
+            return 0.0
+        return 100.0 * (1.0 - d_idle / d_total)
+
+    @staticmethod
+    def _bar_read_ram():
+        """Return RAM usage percentage from /proc/meminfo."""
+        try:
+            info = {}
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        info[parts[0].rstrip(":")] = int(parts[1])
+            total = info.get("MemTotal", 1)
+            avail = info.get("MemAvailable", 0)
+            return 100.0 * (1.0 - avail / total)
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _bar_read_ip():
+        """Return the IP address of the default route interface."""
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.settimeout(0.1)
+            s.connect(("1.1.1.1", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            return "no ip"
+
+    def _bar_draw(self):
+        """Render the status bar — double-buffered."""
+        win = self._status_bar_win
+        if win is None:
+            return
+        w, h = self.sw, BAR_HEIGHT
+
+        # Make sure bar stays on top
+        win.configure(stack_mode=X.Above)
+
+        pm = win.create_pixmap(w, h, self.screen.root_depth)
+
+        # Background
+        gc_bg = pm.create_gc(foreground=self._px(COL_BAR_BG))
+        pm.fill_rectangle(gc_bg, 0, 0, w, h)
+        gc_bg.free()
+
+        pad = 6
+        ws_w = 22       # width of each workspace indicator
+        ws_gap = 3
+        text_y = h // 2 + 4
+
+        # ---- Left: workspace indicators ----
+        x = pad
+        for i in range(NUM_WORKSPACES):
+            is_current = (i == self.current_ws)
+            ws_obj = self.workspaces[i]
+            has_windows = any(True for _ in ws_obj.all_windows())
+
+            if is_current:
+                bg = COL_BAR_WS_ACTIVE
+                fg = COL_BAR_WS_FG_ACT
+            elif has_windows:
+                bg = COL_BAR_WS_OCCUPIED
+                fg = COL_BAR_WS_FG_ACT
+            else:
+                bg = COL_BAR_WS_INACTIVE
+                fg = COL_BAR_WS_FG_INACT
+
+            gc = pm.create_gc(foreground=self._px(bg))
+            pm.fill_rectangle(gc, x, 2, ws_w, h - 4)
+            gc.free()
+
+            gc_txt = pm.create_gc(foreground=self._px(fg), font=self.font)
+            label = str(i + 1).encode("latin-1")
+            pm.draw_text(gc_txt, x + ws_w // 2 - 3, text_y, label)
+            gc_txt.free()
+
+            x += ws_w + ws_gap
+
+        # ---- Right: status text ----
+        self._cpu_pct = self._bar_read_cpu()
+        ram_pct = self._bar_read_ram()
+        ip_str = self._bar_read_ip()
+        now = time.strftime("%a %b %d  %H:%M")
+
+        status = f"CPU {self._cpu_pct:.0f}%   RAM {ram_pct:.0f}%   {ip_str}   {now}"
+        status_bytes = status.encode("latin-1", errors="replace")
+
+        # Approximate text width: ~7px per char for fixed font
+        text_w = len(status) * 7
+        tx = w - text_w - pad
+
+        gc_txt = pm.create_gc(foreground=self._px(COL_BAR_FG), font=self.font)
+        pm.draw_text(gc_txt, tx, text_y, status_bytes)
+        gc_txt.free()
+
+        # Blit to window
+        gc_copy = win.create_gc()
+        win.copy_area(gc_copy, pm, 0, 0, w, h, 0, 0)
+        gc_copy.free()
+        pm.free()
+
+        self.dpy.flush()
+
+    def _bar_handle_click(self, ev):
+        """Handle a click on the status bar — switch workspace if on an indicator."""
+        pad = 6
+        ws_w = 22
+        ws_gap = 3
+        cx = ev.event_x
+        x = pad
+        for i in range(NUM_WORKSPACES):
+            if x <= cx < x + ws_w:
+                self.action_switch_workspace(i)
+                return
+            x += ws_w + ws_gap
+
+    def _bar_destroy(self):
+        if self._status_bar_win is not None:
+            try:
+                self._status_bar_win.unmap()
+                self._status_bar_win.destroy()
+            except Exception:
+                pass
+            self._status_bar_win = None
 
     # ----- tab bar management -----
     def _ensure_tab_bar(self, tile):
@@ -665,6 +865,7 @@ class TilingWM:
         self.current_ws = n
         self._show_workspace(self.ws)
         self._focus_tile(self.ws.active_tile)
+        self._bar_draw()
 
     def action_send_to_workspace(self, n):
         if n == self.current_ws:
@@ -688,6 +889,7 @@ class TilingWM:
         except Exception:
             pass
         self._arrange_tile(tile)
+        self._bar_draw()
 
     def action_spawn(self, cmd):
         subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, 
@@ -725,25 +927,23 @@ class TilingWM:
 
     def action_restart(self):
         """Re-exec the WM process. All client windows survive."""
-        # Destroy our internal windows so the new instance starts clean
+        self._bar_destroy()
         for ws in self.workspaces:
             for tile in ws.all_tiles():
                 self._destroy_tab_bar(tile)
                 self._destroy_frame(tile)
         self.dpy.close()
-        # Replace this process with a fresh copy
         os.execvp(sys.executable, [sys.executable] + sys.argv)
 
     def action_quit(self):
         """Stop the WM and terminate the X session."""
         self._running = False
-        # Destroy our decorations
+        self._bar_destroy()
         for ws in self.workspaces:
             for tile in ws.all_tiles():
                 self._destroy_tab_bar(tile)
                 self._destroy_frame(tile)
         self.dpy.close()
-        # Kill the X session entirely
         os.kill(os.getpid(), signal.SIGTERM)
 
     # ----- manage / unmanage -----
@@ -807,6 +1007,7 @@ class TilingWM:
 
         self._arrange_tile(tile)
         self._focus_tile(tile)
+        self._bar_draw()
 
     def _unmanage_window(self, wid):
         self._bar_windows.discard(wid)
@@ -821,6 +1022,7 @@ class TilingWM:
                 tile.active_tab = max(0, len(tile.windows) - 1)
             if ws_idx == self.current_ws:
                 self._arrange_tile(tile)
+        self._bar_draw()
 
     # ----- X event handlers -----
 
@@ -858,6 +1060,9 @@ class TilingWM:
 
     def _on_expose(self, ev):
         wid = ev.window.id
+        if self._status_bar_win and wid == self._status_bar_win.id:
+            self._bar_draw()
+            return
         if wid in self._tab_bars:
             for tile in self.ws.all_tiles():
                 if tile.tab_bar_win and tile.tab_bar_win.id == wid:
@@ -866,6 +1071,9 @@ class TilingWM:
 
     def _on_button_press(self, ev):
         wid = ev.window.id
+        if self._status_bar_win and wid == self._status_bar_win.id:
+            self._bar_handle_click(ev)
+            return
         if wid in self._tab_bars:
             for tile in self.ws.all_tiles():
                 if tile.tab_bar_win and tile.tab_bar_win.id == wid:
@@ -1090,32 +1298,53 @@ class TilingWM:
             pass
 
         self._arrange_workspace()
+        self._last_bar_update = time.monotonic()
+
+        # Use select() on the X connection fd so we can do periodic bar redraws
+        x_fd = self.dpy.fileno()
 
         while self._running:
+            # Process all queued events first
+            while self.dpy.pending_events():
+                try:
+                    ev = self.dpy.next_event()
+                except Exception:
+                    self._running = False
+                    break
+
+                if ev.type == X.MapRequest:
+                    self._on_map_request(ev)
+                elif ev.type == X.ConfigureRequest:
+                    self._on_configure_request(ev)
+                elif ev.type == X.DestroyNotify:
+                    self._on_destroy_notify(ev)
+                elif ev.type == X.UnmapNotify:
+                    self._on_unmap_notify(ev)
+                elif ev.type == X.Expose:
+                    self._on_expose(ev)
+                elif ev.type == X.KeyPress:
+                    self._on_key_press(ev)
+                elif ev.type == X.ButtonPress:
+                    self._on_button_press(ev)
+                    self.dpy.allow_events(X.ReplayPointer, X.CurrentTime)
+                elif ev.type == X.PropertyNotify:
+                    self._on_property_notify(ev)
+
+            # Periodic bar update
+            now = time.monotonic()
+            if BAR_HEIGHT > 0 and (now - self._last_bar_update) >= BAR_UPDATE_INTERVAL:
+                self._bar_draw()
+                self._last_bar_update = now
+
+            # Wait for X events or timeout for next bar update
             try:
-                ev = self.dpy.next_event()
+                remaining = max(0.05, BAR_UPDATE_INTERVAL - (time.monotonic() - self._last_bar_update))
+                select.select([x_fd], [], [], remaining)
             except Exception:
                 break
 
-            if ev.type == X.MapRequest:
-                self._on_map_request(ev)
-            elif ev.type == X.ConfigureRequest:
-                self._on_configure_request(ev)
-            elif ev.type == X.DestroyNotify:
-                self._on_destroy_notify(ev)
-            elif ev.type == X.UnmapNotify:
-                self._on_unmap_notify(ev)
-            elif ev.type == X.Expose:
-                self._on_expose(ev)
-            elif ev.type == X.KeyPress:
-                self._on_key_press(ev)
-            elif ev.type == X.ButtonPress:
-                self._on_button_press(ev)
-                self.dpy.allow_events(X.ReplayPointer, X.CurrentTime)
-            elif ev.type == X.PropertyNotify:
-                self._on_property_notify(ev)
-
         # Cleanup
+        self._bar_destroy()
         for ws in self.workspaces:
             for tile in ws.all_tiles():
                 self._destroy_tab_bar(tile)
