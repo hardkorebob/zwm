@@ -69,7 +69,7 @@ COL_TAB_INACTIVE_FG = "#AAAAAA"
 COL_TAB_BAR_BG      = "#2B2B2B"
 COL_BORDER_ACTIVE   = "#696969"   # black highlight on active tile
 COL_BORDER_INACTIVE = "#1E1E1E"   # nearly invisible when not focused
-
+COL_DESKTOP_BG      = "#000000"
 # Tree nodes
 
 class Tile:
