@@ -54,9 +54,6 @@ Mouse:
 
   Click tab bar      Activate that tab
   
-  Mod4+Button1 drag  Move floating (fallback, on unmanaged area)
-  
-  Mod4+Button3 drag  Resize floating (fallback)
 
 Bar reservation (polybar):
 
