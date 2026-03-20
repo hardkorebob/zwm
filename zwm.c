@@ -392,6 +392,7 @@ static void arrange_tile(Node *tile);
 static void arrange_workspace(Workspace *w);
 static void hide_workspace(Workspace *w);
 static void focus_tile(Node *tile);
+static void send_configure_notify(Window wid);
 static void bar_draw(void);
 static void bar_destroy(void);
 static void unmanage_window(Window wid);
@@ -978,6 +979,7 @@ static void manage_window(Window wid)
     managed_add(wid, cur_ws);
 
     arrange_tile(tile);
+    send_configure_notify(wid);
     focus_tile(tile);
     bar_draw();
 
@@ -1270,11 +1272,37 @@ static void on_map_request(XEvent *ev)
     manage_window(wid);
 }
 
+/* Send a synthetic ConfigureNotify to tell a client its actual geometry.
+ * Required by ICCCM when a WM denies or ignores a ConfigureRequest. */
+static void send_configure_notify(Window wid)
+{
+    XWindowAttributes wa;
+    if (!XGetWindowAttributes(dpy, wid, &wa)) return;
+
+    XEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.xconfigure.type              = ConfigureNotify;
+    ev.xconfigure.event             = wid;
+    ev.xconfigure.window            = wid;
+    ev.xconfigure.x                 = wa.x;
+    ev.xconfigure.y                 = wa.y;
+    ev.xconfigure.width             = wa.width;
+    ev.xconfigure.height            = wa.height;
+    ev.xconfigure.border_width      = wa.border_width;
+    ev.xconfigure.above             = None;
+    ev.xconfigure.override_redirect = False;
+    XSendEvent(dpy, wid, False, StructureNotifyMask, &ev);
+}
+
 static void on_configure_request(XEvent *ev)
 {
     XConfigureRequestEvent *cr = &ev->xconfigurerequest;
     Window wid = cr->window;
-    if (managed_find(wid) >= 0) return;
+    if (managed_find(wid) >= 0) {
+        /* Deny the request but inform the client of its actual geometry */
+        send_configure_notify(wid);
+        return;
+    }
 
     XWindowChanges wc;
     unsigned int mask = 0;
