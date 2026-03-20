@@ -1,6 +1,5 @@
 /*
  * ZWM — A tabbed tiling window manager inspired by Notion and TinyWM.
- * Single-file C port. Compile with:
  *   cc -O2 -o zwm zwm.c -lX11
  */
 
@@ -962,45 +961,28 @@ static void spawn(const char *cmd)
 /* ===== Manage / unmanage ===== */
 
 /* Check if a window should float (not be tiled).
- * Splash screens, dialogs, tooltips, toolbars, utilities, popups,
- * notifications, docks, and transient windows all float. */
+ * Only truly ephemeral, non-interactive windows float:
+ * splash screens, tooltips, notifications, and popup menus.
+ * Dialogs, utilities, toolbars, and transient windows are interactive
+ * and get tiled into tabs normally. */
 static int should_float(Window wid)
 {
-    /* Check _NET_WM_WINDOW_TYPE */
     Atom type; int fmt; unsigned long ni, after; unsigned char *data = NULL;
     if (XGetWindowProperty(dpy, wid, a_wm_type, 0, 32, False,
             XA_ATOM, &type, &fmt, &ni, &after, &data) == Success && data && ni > 0) {
         Atom *atoms = (Atom *)data;
         for (unsigned long i = 0; i < ni; i++) {
-            if (atoms[i] == a_wm_type_splash  || atoms[i] == a_wm_type_dialog  ||
-                atoms[i] == a_wm_type_utility  || atoms[i] == a_wm_type_toolbar ||
-                atoms[i] == a_wm_type_tooltip  || atoms[i] == a_wm_type_notification ||
-                atoms[i] == a_wm_type_popup_menu || atoms[i] == a_wm_type_dock) {
+            if (atoms[i] == a_wm_type_splash  ||
+                atoms[i] == a_wm_type_tooltip  ||
+                atoms[i] == a_wm_type_notification ||
+                atoms[i] == a_wm_type_popup_menu ||
+                atoms[i] == a_wm_type_dock) {
                 XFree(data);
                 return 1;
             }
         }
         XFree(data);
     } else if (data) { XFree(data); }
-
-    /* Check WM_TRANSIENT_FOR — dialogs and transient popups set this */
-    Window transient_parent = None;
-    if (XGetTransientForHint(dpy, wid, &transient_parent) && transient_parent != None)
-        return 1;
-
-    /* Check WM_NORMAL_HINTS — fixed-size windows (min == max) should float.
-     * Catches splash screens that don't set _NET_WM_WINDOW_TYPE. */
-    {
-        XSizeHints hints;
-        long supplied;
-        if (XGetWMNormalHints(dpy, wid, &hints, &supplied)) {
-            if ((hints.flags & PMinSize) && (hints.flags & PMaxSize) &&
-                hints.min_width == hints.max_width &&
-                hints.min_height == hints.max_height &&
-                hints.min_width > 0 && hints.min_height > 0)
-                return 1;
-        }
-    }
 
     return 0;
 }
