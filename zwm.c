@@ -1,6 +1,5 @@
 /*
  * ZWM — A tabbed tiling window manager inspired by Notion and TinyWM.
- * Single-file C port. Compile with:
  *   cc -O2 -o zwm zwm.c -lX11
  */
 
@@ -30,10 +29,10 @@
 #define WWW_CMD             "firefox"
 #define F7_LAUNCHER_CMD     "dmenu_run"
 
-#define BAR_POS_TOP         1      /* 1 = top, 0 = bottom (status bar) */
+#define BAR_POS_TOP         0       /* 1 = top, 0 = bottom (status bar) */
 #define BAR_HEIGHT          24
 #define BAR_UPDATE_INTERVAL 1.0
-#define BBAR_POS_TOP        0       /* 1 = top, 0 = bottom (hex-time bar) */
+#define BBAR_POS_TOP        1       /* 1 = top, 0 = bottom (hex-time bar) */
 #define BOTTOM_BAR_HEIGHT   14
 
 /* Colours for bottom hex-time bar */
@@ -252,9 +251,12 @@ static void tile_client_area(Node *t, int *cx, int *cy, int *cw, int *ch)
 {
     int b = BORDER_WIDTH, g = BORDER_GAP;
     *cx = t->x + g + b;
-    *cy = t->y + TAB_BAR_HEIGHT + g + b;
     *cw = t->w - 2*(g+b); if (*cw < 1) *cw = 1;
     *ch = t->h - TAB_BAR_HEIGHT - 2*(g+b); if (*ch < 1) *ch = 1;
+    if (BAR_POS_TOP)
+        *cy = t->y + TAB_BAR_HEIGHT + g + b;   /* tab bar on top, client below */
+    else
+        *cy = t->y + g + b;                     /* tab bar on bottom, client above */
 }
 
 /* ===== Node creation / tree helpers ===== */
@@ -932,9 +934,13 @@ static void ensure_tab_bar(Node *tile)
 {
     int g = BORDER_GAP, b = BORDER_WIDTH;
     int bx = tile->x + g + b;
-    int by = tile->y + g + b;
     int bw = tile->w - 2*(g+b); if (bw < 1) bw = 1;
     int bh = TAB_BAR_HEIGHT - b; if (bh < 1) bh = 1;
+    int by;
+    if (BAR_POS_TOP)
+        by = tile->y + g + b;                              /* tab bar at top of tile */
+    else
+        by = tile->y + tile->h - g - TAB_BAR_HEIGHT;       /* tab bar at bottom of tile */
     int is_active = (tile == ws()->active_tile);
     const char *bar_bg = is_active ? COL_BORDER_ACTIVE : COL_TAB_BAR_BG;
 
@@ -1662,8 +1668,8 @@ static void on_key_press(XEvent *ev)
     if (ks == XK_v)  { action_split(0, shifted); return; }
     if (ks == XK_d && !shifted) { action_remove_split(); return; }
 
-    if (ks == XK_F1) { action_next_tab(); return; }
-    if (ks == XK_F2) { action_prev_tab(); return; }
+    if (ks == XK_F2) { action_next_tab(); return; }
+    if (ks == XK_F1) { action_prev_tab(); return; }
 
     if (ks == XK_Left)  { if (shifted) action_move_window_direction("left");  else action_focus_direction("left");  return; }
     if (ks == XK_Right) { if (shifted) action_move_window_direction("right"); else action_focus_direction("right"); return; }
