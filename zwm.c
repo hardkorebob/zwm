@@ -31,7 +31,16 @@
 
 #define BAR_POS_TOP         1       /* 1 = top, 0 = bottom */
 #define BAR_HEIGHT          24
-#define BAR_UPDATE_INTERVAL 2.0
+#define BAR_UPDATE_INTERVAL 1.0
+#define BOTTOM_BAR_HEIGHT   14
+
+/* Colours for bottom hex-time bar */
+#define COL_BBAR_BG         "#1E1E1E"
+#define COL_BBAR_HOUR       "#CC3300"
+#define COL_BBAR_HEX        "#00CC66"
+#define COL_BBAR_SEG        "#CCAA00"
+#define COL_BBAR_LABEL      "#FFFFFF"
+#define COL_BBAR_TRACK      "#333333"
 
 /* Colours — exact hex values from the Python version */
 #define COL_BAR_BG          "#1E1E1E"
@@ -114,6 +123,7 @@ static Window        frame_wins[MAX_SET];
 static int           n_frame_wins;
 
 static Window        status_bar_win;
+static Window        bottom_bar_win;
 static long          prev_cpu_idle, prev_cpu_total;
 static double        cpu_pct;
 static double        last_bar_update;
@@ -397,6 +407,9 @@ static void focus_tile(Node *tile);
 static void send_configure_notify(Window wid);
 static void bar_draw(void);
 static void bar_destroy(void);
+static void bottom_bar_init(void);
+static void bottom_bar_draw(void);
+static void bottom_bar_destroy(void);
 static void unmanage_window(Window wid);
 
 /* ===== EWMH support ===== */
@@ -457,6 +470,7 @@ static void fullscreen_enter(Window wid)
 
     /* Hide bar, tab bars, frames */
     if (status_bar_win != None) XUnmapWindow(dpy, status_bar_win);
+    if (bottom_bar_win != None) XUnmapWindow(dpy, bottom_bar_win);
     Node *tiles[MAX_TILES];
     int n = collect_tiles(ws()->root, tiles, MAX_TILES);
     for (int i = 0; i < n; i++) {
@@ -489,11 +503,16 @@ static void fullscreen_exit(Window wid)
         XMapWindow(dpy, status_bar_win);
         XRaiseWindow(dpy, status_bar_win);
     }
+    if (bottom_bar_win != None) {
+        XMapWindow(dpy, bottom_bar_win);
+        XRaiseWindow(dpy, bottom_bar_win);
+    }
 
     /* Re-arrange the whole workspace — restores all tiles, frames, tab bars */
     arrange_workspace(ws());
     focus_tile(ws()->active_tile);
     bar_draw();
+    bottom_bar_draw();
 }
 
 static void fullscreen_toggle(Window wid)
@@ -753,6 +772,154 @@ static void bar_destroy(void)
     }
 }
 
+/* ===== Bottom hex-time bar ===== */
+
+static void bottom_bar_init(void)
+{
+    int by = sh - BOTTOM_BAR_HEIGHT;
+    XSetWindowAttributes swa;
+    swa.background_pixel = px(COL_BBAR_BG);
+    swa.override_redirect = True;
+    swa.event_mask = ExposureMask;
+    bottom_bar_win = XCreateWindow(dpy, root_win,
+        0, by, (unsigned)sw, BOTTOM_BAR_HEIGHT, 0, depth, InputOutput, CopyFromParent,
+        CWBackPixel | CWOverrideRedirect | CWEventMask, &swa);
+    XRaiseWindow(dpy, bottom_bar_win);
+    XMapWindow(dpy, bottom_bar_win);
+    bottom_bar_draw();
+}
+
+static void bottom_bar_draw(void)
+{
+    if (bottom_bar_win == None) return;
+    int w = sw, h = BOTTOM_BAR_HEIGHT;
+    XRaiseWindow(dpy, bottom_bar_win);
+
+    Pixmap pm = XCreatePixmap(dpy, bottom_bar_win, (unsigned)w, (unsigned)h, (unsigned)depth);
+    GC gc = XCreateGC(dpy, pm, 0, NULL);
+
+    /* Background */
+    XSetForeground(dpy, gc, px(COL_BBAR_BG));
+    XFillRectangle(dpy, pm, gc, 0, 0, (unsigned)w, (unsigned)h);
+
+    /* Get current time in local time */
+    time_t now_t = time(NULL);
+    struct tm *tm = localtime(&now_t);
+    int hours24 = tm->tm_hour;
+    int minutes = tm->tm_min;
+    int seconds = tm->tm_sec;
+    int hours12 = (hours24 == 0) ? 12 : (hours24 > 12 ? hours24 - 12 : hours24);
+
+    int total_secs_in_hour = minutes * 60 + seconds;
+    int hex_segment = total_secs_in_hour / 225;  /* 0-15 */
+    if (hex_segment > 15) hex_segment = 15;
+    double progress_in_seg = (total_secs_in_hour % 225) / 225.0;
+
+    double hour_pct   = ((hours24 * 60) + minutes) / (24.0 * 60.0);
+    double hex_pct    = total_secs_in_hour / 3600.0;
+    double seg_pct    = progress_in_seg;
+
+    const char *hex_chars = "0123456789ABCDEF";
+
+    /* Layout: 3 bars side by side
+     * Bar 1 (hour):  label + fill
+     * Bar 2 (hex):   label + fill
+     * Bar 3 (seg):   fill only, no label
+     * Labels take ~16px width, 2px gap after label */
+    int label_w = 16;
+    int gap = 2;
+    int bar_y = 1;
+    int bar_h = h - 2;
+    if (bar_h < 1) bar_h = 1;
+
+    /* Divide screen into 3 equal zones */
+    int zone_w = w / 3;
+
+    /* --- Bar 1: Hour (red) --- */
+    {
+        int x0 = 0;
+        int fill_x = x0 + label_w + gap;
+        int fill_w = zone_w - label_w - gap - gap;
+        if (fill_w < 1) fill_w = 1;
+
+        /* Track */
+        XSetForeground(dpy, gc, px(COL_BBAR_TRACK));
+        XFillRectangle(dpy, pm, gc, fill_x, bar_y, (unsigned)fill_w, (unsigned)bar_h);
+
+        /* Fill */
+        int fw = (int)(fill_w * hour_pct);
+        if (fw > 0) {
+            XSetForeground(dpy, gc, px(COL_BBAR_HOUR));
+            XFillRectangle(dpy, pm, gc, fill_x, bar_y, (unsigned)fw, (unsigned)bar_h);
+        }
+
+        /* Label */
+        char lbl[4];
+        snprintf(lbl, sizeof(lbl), "%d", hours12);
+        XSetForeground(dpy, gc, px(COL_BBAR_LABEL));
+        XSetFont(dpy, gc, font->fid);
+        XDrawString(dpy, pm, gc, x0 + 2, bar_y + bar_h - 1, lbl, (int)strlen(lbl));
+    }
+
+    /* --- Bar 2: Hex minute block (green) --- */
+    {
+        int x0 = zone_w;
+        int fill_x = x0 + label_w + gap;
+        int fill_w = zone_w - label_w - gap - gap;
+        if (fill_w < 1) fill_w = 1;
+
+        /* Track */
+        XSetForeground(dpy, gc, px(COL_BBAR_TRACK));
+        XFillRectangle(dpy, pm, gc, fill_x, bar_y, (unsigned)fill_w, (unsigned)bar_h);
+
+        /* Fill */
+        int fw = (int)(fill_w * hex_pct);
+        if (fw > 0) {
+            XSetForeground(dpy, gc, px(COL_BBAR_HEX));
+            XFillRectangle(dpy, pm, gc, fill_x, bar_y, (unsigned)fw, (unsigned)bar_h);
+        }
+
+        /* Label */
+        char lbl[2] = { hex_chars[hex_segment], '\0' };
+        XSetForeground(dpy, gc, px(COL_BBAR_LABEL));
+        XSetFont(dpy, gc, font->fid);
+        XDrawString(dpy, pm, gc, x0 + 2, bar_y + bar_h - 1, lbl, 1);
+    }
+
+    /* --- Bar 3: Segment progress (yellow), no label --- */
+    {
+        int x0 = zone_w * 2;
+        int fill_w = w - x0 - gap;
+        if (fill_w < 1) fill_w = 1;
+
+        /* Track */
+        XSetForeground(dpy, gc, px(COL_BBAR_TRACK));
+        XFillRectangle(dpy, pm, gc, x0 + gap, bar_y, (unsigned)fill_w, (unsigned)bar_h);
+
+        /* Fill */
+        int fw = (int)(fill_w * seg_pct);
+        if (fw > 0) {
+            XSetForeground(dpy, gc, px(COL_BBAR_SEG));
+            XFillRectangle(dpy, pm, gc, x0 + gap, bar_y, (unsigned)fw, (unsigned)bar_h);
+        }
+    }
+
+    /* Blit */
+    XCopyArea(dpy, pm, bottom_bar_win, gc, 0, 0, (unsigned)w, (unsigned)h, 0, 0);
+    XFreeGC(dpy, gc);
+    XFreePixmap(dpy, pm);
+    XFlush(dpy);
+}
+
+static void bottom_bar_destroy(void)
+{
+    if (bottom_bar_win != None) {
+        XUnmapWindow(dpy, bottom_bar_win);
+        XDestroyWindow(dpy, bottom_bar_win);
+        bottom_bar_win = None;
+    }
+}
+
 /* ===== Tab bar management ===== */
 
 static void ensure_tab_bar(Node *tile)
@@ -961,10 +1128,9 @@ static void spawn(const char *cmd)
 /* ===== Manage / unmanage ===== */
 
 /* Check if a window should float (not be tiled).
- * Only truly ephemeral, non-interactive windows float:
- * splash screens, tooltips, notifications, and popup menus.
- * Dialogs, utilities, toolbars, and transient windows are interactive
- * and get tiled into tabs normally. */
+ * Only truly ephemeral, non-interactive window types float:
+ * splash screens, tooltips, notifications, popup menus, and docks.
+ * Everything else (dialogs, utilities, transients) gets tiled normally. */
 static int should_float(Window wid)
 {
     Atom type; int fmt; unsigned long ni, after; unsigned char *data = NULL;
@@ -992,15 +1158,18 @@ static void manage_window(Window wid)
     if (managed_find(wid) >= 0) return;
     if (set_contains(tab_bars,  n_tab_bars,  wid)) return;
     if (set_contains(frame_wins, n_frame_wins, wid)) return;
+    if (wid == bottom_bar_win || wid == status_bar_win) return;
 
     XWindowAttributes wa;
     if (!XGetWindowAttributes(dpy, wid, &wa)) return;
     if (wa.override_redirect) return;
 
-    /* Splash screens, dialogs, transients, etc. — leave floating */
+    /* Ephemeral windows (splash, tooltip, notification, popup) — leave floating.
+     * Center on screen and raise so the user sees them (e.g. splash progress).
+     * Safe to raise because should_float only matches truly ephemeral types now,
+     * not interactive windows like dialogs or settings panels. */
     if (should_float(wid)) {
-        /* Center on screen if the window hasn't positioned itself yet */
-        if (wa.x == 0 && wa.y == 0) {
+        if (wa.x <= 0 && wa.y <= 0 && wa.width < sw && wa.height < sh) {
             int nx = (sw - wa.width)  / 2;
             int ny = (sh - wa.height) / 2;
             if (nx < 0) nx = 0;
@@ -1008,6 +1177,7 @@ static void manage_window(Window wid)
             XMoveWindow(dpy, wid, nx, ny);
         }
         XRaiseWindow(dpy, wid);
+        XFlush(dpy);
         return;
     }
 
@@ -1022,6 +1192,7 @@ static void manage_window(Window wid)
     managed_add(wid, cur_ws);
 
     arrange_tile(tile);
+    send_configure_notify(wid);
     focus_tile(tile);
     bar_draw();
 
@@ -1292,6 +1463,7 @@ static void action_quit(void)
 {
     running = 0;
     bar_destroy();
+    bottom_bar_destroy();
     cleanup_ewmh();
     for (int i = 0; i < NUM_WORKSPACES; i++) {
         Node *tiles[MAX_TILES];
@@ -1372,6 +1544,7 @@ static void on_expose(XEvent *ev)
 {
     Window wid = ev->xexpose.window;
     if (status_bar_win != None && wid == status_bar_win) { bar_draw(); return; }
+    if (bottom_bar_win != None && wid == bottom_bar_win) { bottom_bar_draw(); return; }
     if (set_contains(tab_bars, n_tab_bars, wid)) {
         Node *tiles[MAX_TILES];
         int n = collect_tiles(ws()->root, tiles, MAX_TILES);
@@ -1389,6 +1562,9 @@ static void on_button_press(XEvent *ev)
         bar_handle_click(ev);
         return;
     }
+
+    /* Bottom bar — ignore clicks */
+    if (bottom_bar_win != None && wid == bottom_bar_win) return;
 
     /* Tab bar */
     if (set_contains(tab_bars, n_tab_bars, wid)) {
@@ -1561,11 +1737,11 @@ int main(int argc, char **argv)
 
     /* Bar reservation */
     if (BAR_HEIGHT > 0 && BAR_POS_TOP) {
-        tile_y_off = BAR_HEIGHT; tile_h_val = sh - BAR_HEIGHT;
+        tile_y_off = BAR_HEIGHT; tile_h_val = sh - BAR_HEIGHT - BOTTOM_BAR_HEIGHT;
     } else if (BAR_HEIGHT > 0) {
-        tile_y_off = 0; tile_h_val = sh - BAR_HEIGHT;
+        tile_y_off = 0; tile_h_val = sh - BAR_HEIGHT - BOTTOM_BAR_HEIGHT;
     } else {
-        tile_y_off = 0; tile_h_val = sh;
+        tile_y_off = 0; tile_h_val = sh - BOTTOM_BAR_HEIGHT;
     }
 
     /* Font */
@@ -1603,6 +1779,7 @@ int main(int argc, char **argv)
     }
     cur_ws = 0;
     status_bar_win = None;
+    bottom_bar_win = None;
     fullscreen_win = None;
     running = 1;
 
@@ -1628,6 +1805,9 @@ int main(int argc, char **argv)
 
     /* Status bar */
     if (BAR_HEIGHT > 0) bar_init();
+
+    /* Bottom hex-time bar */
+    bottom_bar_init();
 
     /* Manage existing windows */
     {
@@ -1673,8 +1853,9 @@ int main(int argc, char **argv)
 
         /* Periodic bar update */
         double now = mono_time();
-        if (BAR_HEIGHT > 0 && (now - last_bar_update) >= BAR_UPDATE_INTERVAL) {
-            bar_draw();
+        if ((now - last_bar_update) >= BAR_UPDATE_INTERVAL) {
+            if (BAR_HEIGHT > 0) bar_draw();
+            bottom_bar_draw();
             last_bar_update = now;
         }
 
@@ -1692,6 +1873,7 @@ int main(int argc, char **argv)
 
     /* Cleanup */
     bar_destroy();
+    bottom_bar_destroy();
     cleanup_ewmh();
     for (int i = 0; i < NUM_WORKSPACES; i++) {
         Node *tiles[MAX_TILES];
