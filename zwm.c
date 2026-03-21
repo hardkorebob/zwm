@@ -662,7 +662,7 @@ static void spawn(const char *cmd);
 static void bar_set_volume(int delta)
 {
     char cmd[128];
-    snprintf(cmd, sizeof(cmd), "amixer set Master %d%%%c >/dev/null 2>&1",
+    snprintf(cmd, sizeof(cmd), "amixer sset Master %d%%%c >/dev/null 2>&1",
              abs(delta), delta > 0 ? '+' : '-');
     spawn(cmd);
     bar_draw();
