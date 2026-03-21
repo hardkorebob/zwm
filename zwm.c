@@ -1454,8 +1454,6 @@ static void action_focus_direction(const char *dir)
     Node *adj = find_adjacent(dir);
     if (adj) {
         focus_tile(adj);
-        arrange_tile(ws()->active_tile);
-        arrange_tile(adj);
     }
 }
 
