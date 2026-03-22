@@ -77,7 +77,7 @@ Format is `key = value`, one per line. Lines starting with `#` are comments.
 
 ## IPC
 
-ZWM listens on a Unix socket at `$XDG_RUNTIME_DIR/swm.sock` (fallback: `/tmp/swm.sock`). This part is quirky, but I like it because it reminds me of Plan9. And you can use it for a startup script so that you can create your own layouts automatically. 
+SWM listens on a Unix socket at `$XDG_RUNTIME_DIR/swm.sock` (fallback: `/tmp/swm.sock`). This part is quirky, but I like it because it reminds me of Plan9. And you can use it for a startup script so that you can create your own layouts automatically. 
 
 Use `swmctl` to send commands:(no arguments to see help)
 
