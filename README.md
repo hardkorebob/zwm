@@ -77,7 +77,7 @@ Format is `key = value`, one per line. Lines starting with `#` are comments.
 | 1-9 | Send window to workspace        |
 
 ## IPC
-`the real gold of this project is the scripting. you can make a script where the colors change at a certain interval giving the whole desktop a breathing-like, life-like quality. think about it. it can also make orchestrating custom layouts a breeze. you could even make a small automated "demo" of all the applications of the computer using this socket scripting capapbility. what do you think? outline your findings`
+`Prompt: The real gold of this project is the scripting. you can make a script where the colors change at a certain interval giving the whole desktop a breathing-like, life-like quality. think about it. it can also make orchestrating custom layouts a breeze. you could even make a small automated "demo" of all the applications of the computer using this socket scripting capapbility. what do you think? outline your findings`
 
 The protocol is dead simple — a UNIX socket at /tmp/swm.sock, newline-delimited text commands, with synchronous ok/err: replies. Any language that can open a socket can drive it. Even socat or nc works one-shot from the shell.
 
