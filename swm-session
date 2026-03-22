@@ -1,4 +1,4 @@
 #!/bin/sh
 # SWM session launcher — called by LightDM / display manager.
 
-exec zwm
+exec swm
