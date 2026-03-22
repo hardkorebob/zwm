@@ -77,20 +77,27 @@ Format is `key = value`, one per line. Lines starting with `#` are comments.
 | 1-9 | Send window to workspace        |
 
 ## IPC
+`the real gold of this project is the scripting. you can make a script where the colors change at a certain interval giving the whole desktop a breathing-like, life-like quality. think about it. it can also make orchestrating custom layouts a breeze. you could even make a small automated "demo" of all the applications of the computer using this socket scripting capapbility. what do you think? outline your findings`
 
-SWM listens on a Unix socket at `$XDG_RUNTIME_DIR/swm.sock` (fallback: `/tmp/swm.sock`). This part is quirky, but I like it because it reminds me of Plan9. And you can use it for a startup script so that you can create your own layouts automatically. 
+The protocol is dead simple — a UNIX socket at /tmp/swm.sock, newline-delimited text commands, with synchronous ok/err: replies. Any language that can open a socket can drive it. Even socat or nc works one-shot from the shell.
 
-Use `swmctl` to send commands:(no arguments to see help)
+**What's controllable at runtime via set:**
 
-```
-swmctl split h
-swmctl workspace 3
-swmctl exec rofi -show run
-swmctl query win-title
-swmctl set border_gap 6
-swmctl reload
-swmctl fullscreen
-```
+Every color in the entire UI (23 col_* keys), all geometry (tab bar height, border width, border gap, statusbar/timebar height and position), the update interval, all five program slots (terminal, browser, file manager, launcher, reload command), and keybindings. And set calls cfg_apply() immediately — it flushes the color cache, recalculates bar geometry, tears down and rebuilds the bars, repaints the root window background, re-arranges tiles, and re-grabs keys. So every change is live and instantaneous.
+
+**What's controllable via action commands:**
+
+exec, split h/v, split-move h/v, unsplit, close, quit, reload, fullscreen, tab navigation (next/prev/move forward/backward), workspace switching (next/prev/by number), send to workspace, focus/move in four directions.
+
+Query interface: current workspace number, window count in active tile, active window title, and tile count (layout). That's enough for a script to be state-aware.
+
+**What this enables:**
+
+The breathing colors idea works perfectly. A script just loops and interpolates between two hex values on any combination of the 23 color keys. Since set flushes and repaints immediately, you get smooth visual transitions at whatever cadence you want. You could have the border pulse when a long-running build finishes, or shift the whole palette to warm tones at sunset using the system clock.
+
+The layout orchestration is the bigger deal. A script can exec an app, wait for query win-count to increment (confirming it mapped), then split h, focus right, exec the next app, split v, and so on — building an arbitrary tiled layout programmatically. Since send moves windows between workspaces, you can pre-populate all 9 workspaces from a single startup script: workspace 1 gets terminal + editor side-by-side, workspace 2 gets browser + notes, workspace 3 gets htop + logs stacked, etc.
+
+The demo mode idea is viable because of query. A demo script can narrate what it's doing: switch to workspace 1, exec a terminal, split, exec another, move focus around, switch workspaces — all while the queries let it verify each step succeeded before proceeding. Add set color changes between scenes for visual punctuation. You could record the whole thing with a screen recorder and have a fully automated showcase of the WM.
 
 Pipe mode:
 
