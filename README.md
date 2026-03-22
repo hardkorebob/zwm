@@ -52,12 +52,12 @@ Format is `key = value`, one per line. Lines starting with `#` are comments.
 | F7 | Launcher           |
 | F8 | File manager       |
 | F9 | Browser            |
-
+| F10 | Terminal          |
 ### Mod4 (Super)
 
 | Mod4+Key | Action            |
 |----------|-------------------|
-| Return   | Terminal          |
+| r | Reload config            |
 | h | Split horizontal         |
 | v | Split vertical           |
 | d | Remove split             |
