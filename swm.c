@@ -119,6 +119,12 @@ typedef struct {
 
 static Config cfg;
 
+static void sarg_copy(char *dst, size_t dsz, const char *src)
+{
+    dst[0] = '\0';
+    if (src) { strncpy(dst, src, dsz - 1); dst[dsz - 1] = '\0'; }
+}
+
 static void cfg_defaults(void)
 {
     cfg.tab_bar_height     = 22;
@@ -136,39 +142,44 @@ static void cfg_defaults(void)
     strncpy(cfg.launcher_cmd, "dmenu_run", sizeof(cfg.launcher_cmd) - 1);
     strncpy(cfg.reload_cmd, "swmctl reload", sizeof(cfg.reload_cmd) - 1);
 
-    strncpy(cfg.col_statusbar_bg,          "#1E1E1E", 7);
-    strncpy(cfg.col_statusbar_fg,          "#FFBF00", 7);
-    strncpy(cfg.col_statusbar_ws_active,   "#fbe7ac", 7);
-    strncpy(cfg.col_statusbar_ws_inactive, "#555555", 7);
-    strncpy(cfg.col_statusbar_ws_occupied, "#888888", 7);
-    strncpy(cfg.col_statusbar_ws_fg_act,   "#000000", 7);
-    strncpy(cfg.col_statusbar_ws_fg_inact, "#AAAAAA", 7);
+    /* Color literals are exactly 7 chars + NUL = 8 bytes, matching field size.
+       Use memcpy to copy the full 8 bytes (including NUL) and avoid
+       -Wstringop-truncation from strncpy seeing count == strlen(src). */
+    #define SETCOL(dst, lit) memcpy((dst), (lit), 8)
+    SETCOL(cfg.col_statusbar_bg,          "#1E1E1E");
+    SETCOL(cfg.col_statusbar_fg,          "#FFBF00");
+    SETCOL(cfg.col_statusbar_ws_active,   "#fbe7ac");
+    SETCOL(cfg.col_statusbar_ws_inactive, "#555555");
+    SETCOL(cfg.col_statusbar_ws_occupied, "#888888");
+    SETCOL(cfg.col_statusbar_ws_fg_act,   "#000000");
+    SETCOL(cfg.col_statusbar_ws_fg_inact, "#AAAAAA");
 
-    strncpy(cfg.col_tab_active_bg,     "#fbe7ac", 7);
-    strncpy(cfg.col_tab_inactive_bg,   "#3C3C3C", 7);
-    strncpy(cfg.col_tab_active_fg,     "#000000", 7);
-    strncpy(cfg.col_tab_inactive_fg,   "#AAAAAA", 7);
-    strncpy(cfg.col_tab_bar_bg,        "#2B2B2B", 7);
-    strncpy(cfg.col_tab_active_bg_dim, "#555555", 7);
-    strncpy(cfg.col_tab_active_fg_dim, "#CCCCCC", 7);
+    SETCOL(cfg.col_tab_active_bg,     "#fbe7ac");
+    SETCOL(cfg.col_tab_inactive_bg,   "#3C3C3C");
+    SETCOL(cfg.col_tab_active_fg,     "#000000");
+    SETCOL(cfg.col_tab_inactive_fg,   "#AAAAAA");
+    SETCOL(cfg.col_tab_bar_bg,        "#2B2B2B");
+    SETCOL(cfg.col_tab_active_bg_dim, "#555555");
+    SETCOL(cfg.col_tab_active_fg_dim, "#CCCCCC");
 
-    strncpy(cfg.col_border_active,   "#696969", 7);
-    strncpy(cfg.col_border_inactive, "#1E1E1E", 7);
-    strncpy(cfg.col_desktop_bg,      "#000000", 7);
+    SETCOL(cfg.col_border_active,   "#696969");
+    SETCOL(cfg.col_border_inactive, "#1E1E1E");
+    SETCOL(cfg.col_desktop_bg,      "#000000");
 
-    strncpy(cfg.col_timebar_bg,    "#1E1E1E", 7);
-    strncpy(cfg.col_timebar_hour,  "#CC3300", 7);
-    strncpy(cfg.col_timebar_hex,   "#00CC66", 7);
-    strncpy(cfg.col_timebar_seg,   "#CCAA00", 7);
-    strncpy(cfg.col_timebar_label, "#FFFFFF", 7);
-    strncpy(cfg.col_timebar_track, "#333333", 7);
+    SETCOL(cfg.col_timebar_bg,    "#1E1E1E");
+    SETCOL(cfg.col_timebar_hour,  "#CC3300");
+    SETCOL(cfg.col_timebar_hex,   "#00CC66");
+    SETCOL(cfg.col_timebar_seg,   "#CCAA00");
+    SETCOL(cfg.col_timebar_label, "#FFFFFF");
+    SETCOL(cfg.col_timebar_track, "#333333");
+    #undef SETCOL
 
     /* Default keybindings */
     cfg.n_binds = 0;
     #define B(k, m, a, i, s) do { \
         Keybind *b = &cfg.binds[cfg.n_binds++]; \
         b->key = (k); b->mod = (m); b->action = (a); b->iarg = (i); \
-        b->sarg[0] = '\0'; if (s) strncpy(b->sarg, (s), sizeof(b->sarg)-1); \
+        sarg_copy(b->sarg, sizeof(b->sarg), (s)); \
     } while(0)
 
     /* F-keys — no modifier */
@@ -1349,7 +1360,7 @@ static void bottom_bar_draw(void)
         }
 
         /* Label */
-        char lbl[4];
+        char lbl[12];
         snprintf(lbl, sizeof(lbl), "%d", hours12);
         XSetForeground(dpy, gc, px(cfg.col_timebar_label));
         XSetFont(dpy, gc, font->fid);
@@ -2013,7 +2024,10 @@ static void cmd_init(void)
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
+    { size_t plen = strlen(path);
+      if (plen >= sizeof(addr.sun_path)) plen = sizeof(addr.sun_path) - 1;
+      memcpy(addr.sun_path, path, plen);
+      addr.sun_path[plen] = '\0'; }
 
     if (bind(cmd_listen_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         fprintf(stderr, "swm: cmd bind(%s): %s\n", path, strerror(errno));
