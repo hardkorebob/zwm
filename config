@@ -1,7 +1,7 @@
-# ZWM configuration
-# Place at: ~/.config/zwm/config
-# Reload:   kill -HUP $(pidof zwm)
-#      or:  zwmctl reload
+# SWM configuration
+# Place at: ~/.config/swm/config
+# Reload:   kill -HUP $(pidof swm)
+#      or:  swmctl reload
 
 # ===== Geometry =====
 
