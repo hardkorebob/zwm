@@ -1,0 +1,57 @@
+# ZWM configuration
+# Place at: ~/.config/zwm/config
+# Reload:   kill -HUP $(pidof zwm)
+#      or:  zwmctl reload
+
+# ===== Geometry =====
+
+tab_bar_height      = 22
+border_width        = 1
+border_gap          = 2
+bar_pos_top         = 0        # 0 = bottom, 1 = top
+bar_height          = 24
+bbar_pos_top        = 1        # hex-time bar: 0 = bottom, 1 = top
+bottom_bar_height   = 14
+bar_update_interval = 1.0
+
+# ===== Commands =====
+
+terminal     = xterm
+file_manager = thunar
+browser      = firefox
+launcher     = dmenu_run
+
+# ===== Colours — status bar =====
+
+col_bar_bg          = #1E1E1E
+col_bar_fg          = #FFBF00
+col_bar_ws_active   = #fbe7ac
+col_bar_ws_inactive = #555555
+col_bar_ws_occupied = #888888
+col_bar_ws_fg_act   = #000000
+col_bar_ws_fg_inact = #AAAAAA
+
+# ===== Colours — tab bar =====
+
+col_tab_active_bg     = #fbe7ac
+col_tab_inactive_bg   = #3C3C3C
+col_tab_active_fg     = #000000
+col_tab_inactive_fg   = #AAAAAA
+col_tab_bar_bg        = #2B2B2B
+col_tab_active_bg_dim = #555555    # active tab in unfocused tile
+col_tab_active_fg_dim = #CCCCCC
+
+# ===== Colours — borders / desktop =====
+
+col_border_active   = #696969
+col_border_inactive = #1E1E1E
+col_desktop_bg      = #000000
+
+# ===== Colours — bottom hex-time bar =====
+
+col_bbar_bg    = #1E1E1E
+col_bbar_hour  = #CC3300
+col_bbar_hex   = #00CC66
+col_bbar_seg   = #CCAA00
+col_bbar_label = #FFFFFF
+col_bbar_track = #333333

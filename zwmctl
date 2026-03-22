@@ -1,0 +1,71 @@
+#!/bin/sh
+#
+# zwmctl — command-line interface for ZWM
+#
+# Usage:
+#   zwmctl <command> [args...]
+#   echo "command" | zwmctl -
+#
+# Requires socat(1).  Install: apt install socat / pacman -S socat
+#
+# Commands:
+#   exec <cmd>          Spawn a process
+#   split h|v           Split active tile horizontally or vertically
+#   split-move h|v      Split and move focused window into new tile
+#   unsplit             Remove the current split (merge tiles)
+#   close               Close active window (WM_DELETE or destroy)
+#   quit                Exit ZWM
+#   next-tab            Cycle to next tab in tile
+#   prev-tab            Cycle to previous tab in tile
+#   move-tab-fwd        Move tab position forward
+#   move-tab-bwd        Move tab position backward
+#   next-ws             Next workspace
+#   prev-ws             Previous workspace
+#   workspace <1-9>     Switch to workspace N
+#   send <1-9>          Send active window to workspace N
+#   focus <dir>         Focus adjacent tile (left|right|up|down)
+#   move <dir>          Move window to adjacent tile (left|right|up|down)
+#   fullscreen          Toggle fullscreen on active window
+#   query ws            Print current workspace number
+#   query win-count     Print window count in active tile
+#   query win-title     Print active window's title
+#   query layout        Print tile count in current workspace
+#
+
+set -e
+
+# Resolve socket path
+if [ -n "$ZWM_SOCK" ]; then
+    SOCK="$ZWM_SOCK"
+elif [ -S "${XDG_RUNTIME_DIR}/zwm.sock" ]; then
+    SOCK="${XDG_RUNTIME_DIR}/zwm.sock"
+elif [ -S "/tmp/zwm.sock" ]; then
+    SOCK="/tmp/zwm.sock"
+else
+    echo "zwmctl: cannot find zwm socket" >&2
+    echo "  set ZWM_SOCK or ensure ZWM is running" >&2
+    exit 1
+fi
+
+# Check for socat
+if ! command -v socat >/dev/null 2>&1; then
+    echo "zwmctl: socat not found — install it (apt install socat)" >&2
+    exit 1
+fi
+
+# Read from stdin pipe mode
+if [ "$1" = "-" ]; then
+    while IFS= read -r line; do
+        printf '%s\n' "$line" | socat - "UNIX-CONNECT:$SOCK"
+    done
+    exit 0
+fi
+
+# No args — show usage
+if [ $# -eq 0 ]; then
+    sed -n '/^# Commands:/,/^#$/p' "$0" | sed 's/^# //' | sed 's/^#//'
+    exit 0
+fi
+
+# Send command, print response
+printf '%s\n' "$*" | socat - "UNIX-CONNECT:$SOCK"
