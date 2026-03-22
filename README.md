@@ -2,6 +2,8 @@
 
 A tabbed manual-tiling window manager for X11. No dependencies beyond Xlib. Inspired by Notion and TinyWM.
 
+![Screenshot](scrot.png)
+
 Hello, everybody. I just wanted to show off the project that I made with Claude and wanted to write a personal note using my voice and the tool called Handy to dictate my text. The following is a technical summary that Claude wrote. I've been playing with LLMs for a minute, and I just wanted to say thank you to everyone for checking the project out and having all the work that everyone's done in the world to make this possible. I use a [Sanskrit](https://github.com/hardkorebob/spte) inspired prompt engineering style for building my tools. I don't use agents/MCP. Patience and caution one step a time. I usually start with a prototype in HTML or Python and then I'll convert it to whatever language seems necessary for the type of tool that I'm making. And of course after a lot of trial and error, I get it to work and I learn along the way.  I really appreciate everyone. Thank you so much. And also it's a fun little window manager. It's a different take on my way of using my computer. So please enjoy. Thank you again. PS: I'm sure there is a bug or ten kicking around but hey, its all just for fun! Plus I fixed all the ASCII tables cuz AI sucks at art. Womp womp...didnt know markdown ascii tables look like real tables in readme... all that time fixing the | to line up ;-)
 
 ## Features
