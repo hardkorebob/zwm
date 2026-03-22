@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=SWM
+Comment=Tabbed tiling window manager
+Exec=/usr/local/bin/swm-session
+TryExec=/usr/local/bin/swm-session
+Type=Application
