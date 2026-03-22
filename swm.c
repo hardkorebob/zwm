@@ -168,6 +168,7 @@ static int cfg_set_kv(const char *key, const char *val)
     if (strcmp(key, "browser") == 0)      { strncpy(cfg.www_cmd,      val, sizeof(cfg.www_cmd) - 1);      return 1; }
     if (strcmp(key, "launcher") == 0)     { strncpy(cfg.launcher_cmd, val, sizeof(cfg.launcher_cmd) - 1); return 1; }
 
+    /* Colors — validate: must start with # and be 7 chars escape: with swmctl set col_statusbar_bg "#FF0000" "*/
     if (val[0] != '#' || strlen(val) < 7) return 0;
 
     if (strcmp(key, "col_statusbar_bg") == 0)            { strncpy(cfg.col_statusbar_bg,          val, 7); return 1; }
