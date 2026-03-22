@@ -1,10 +1,10 @@
 #!/bin/sh
 #
-# zwmctl — command-line interface for ZWM
+# swmctl — command-line interface for SWM
 #
 # Usage:
-#   zwmctl <command> [args...]
-#   echo "command" | zwmctl -
+#   swmctl <command> [args...]
+#   echo "command" | swmctl -
 #
 # Requires socat(1).  Install: apt install socat / pacman -S socat
 #
@@ -14,7 +14,7 @@
 #   split-move h|v      Split and move focused window into new tile
 #   unsplit             Remove the current split (merge tiles)
 #   close               Close active window (WM_DELETE or destroy)
-#   quit                Exit ZWM
+#   quit                Exit SWM
 #   next-tab            Cycle to next tab in tile
 #   prev-tab            Cycle to previous tab in tile
 #   move-tab-fwd        Move tab position forward
@@ -35,21 +35,21 @@
 set -e
 
 # Resolve socket path
-if [ -n "$ZWM_SOCK" ]; then
-    SOCK="$ZWM_SOCK"
-elif [ -S "${XDG_RUNTIME_DIR}/zwm.sock" ]; then
-    SOCK="${XDG_RUNTIME_DIR}/zwm.sock"
-elif [ -S "/tmp/zwm.sock" ]; then
-    SOCK="/tmp/zwm.sock"
+if [ -n "$SWM_SOCK" ]; then
+    SOCK="$SWM_SOCK"
+elif [ -S "${XDG_RUNTIME_DIR}/swm.sock" ]; then
+    SOCK="${XDG_RUNTIME_DIR}/swm.sock"
+elif [ -S "/tmp/swm.sock" ]; then
+    SOCK="/tmp/swm.sock"
 else
-    echo "zwmctl: cannot find zwm socket" >&2
-    echo "  set ZWM_SOCK or ensure ZWM is running" >&2
+    echo "swmctl: cannot find swm socket" >&2
+    echo "  set SWM_SOCK or ensure SWM is running" >&2
     exit 1
 fi
 
 # Check for socat
 if ! command -v socat >/dev/null 2>&1; then
-    echo "zwmctl: socat not found — install it (apt install socat)" >&2
+    echo "swmctl: socat not found — install it (apt install socat)" >&2
     exit 1
 fi
 
