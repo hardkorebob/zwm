@@ -247,6 +247,11 @@ static int tile_index(Node *t, Window w)
     for (int i = 0; i < t->tile.nwindows; i++) if (t->tile.windows[i] == w) return i;
     return -1;
 }
+static void tile_clamp_tab(Node *t)
+{
+    if (t->tile.active_tab >= t->tile.nwindows)
+        t->tile.active_tab = t->tile.nwindows > 0 ? t->tile.nwindows - 1 : 0;
+}
 
 /* ===== Utility: client area of a tile ===== */
 
@@ -1265,8 +1270,7 @@ static void unmanage_window(Window wid)
     Node *tile = ws_find_tile(w, wid);
     if (tile) {
         tile_remove(tile, wid);
-        if (tile->tile.active_tab >= tile->tile.nwindows)
-            tile->tile.active_tab = tile->tile.nwindows > 0 ? tile->tile.nwindows - 1 : 0;
+        tile_clamp_tab(tile);
         if (ws_idx == cur_ws) arrange_tile(tile);
     }
     bar_draw();
@@ -1296,8 +1300,7 @@ static void action_send_to_workspace(int n)
     Window wid = tile->tile.windows[tile->tile.active_tab];
 
     tile_remove(tile, wid);
-    if (tile->tile.active_tab >= tile->tile.nwindows)
-        tile->tile.active_tab = tile->tile.nwindows > 0 ? tile->tile.nwindows - 1 : 0;
+    tile_clamp_tab(tile);
 
     Workspace *tw = &workspaces[n];
     tile_add(tw->active_tile, wid);
@@ -1357,8 +1360,7 @@ static void action_split(int horizontal, int move_window)
     if (move_window && tile->tile.nwindows > 0) {
         Window wid = tile->tile.windows[tile->tile.active_tab];
         tile_remove(tile, wid);
-        if (tile->tile.active_tab >= tile->tile.nwindows)
-            tile->tile.active_tab = tile->tile.nwindows > 0 ? tile->tile.nwindows - 1 : 0;
+        tile_clamp_tab(tile);
         tile_add(sibling, wid);
         sibling->tile.active_tab = 0;
         ws()->active_tile = sibling;
@@ -1402,8 +1404,7 @@ static void action_remove_split(void)
         gp->split.children[gi] = tile;
     }
 
-    if (tile->tile.nwindows > 0 && tile->tile.active_tab >= tile->tile.nwindows)
-        tile->tile.active_tab = tile->tile.nwindows - 1;
+    tile_clamp_tab(tile);
 
     ws()->active_tile = tile;
 
@@ -1476,8 +1477,7 @@ static void action_move_window_direction(const char *dir)
 
     Window wid = src->tile.windows[src->tile.active_tab];
     tile_remove(src, wid);
-    if (src->tile.active_tab >= src->tile.nwindows)
-        src->tile.active_tab = src->tile.nwindows > 0 ? src->tile.nwindows - 1 : 0;
+    tile_clamp_tab(src);
 
     tile_add(dst, wid);
     dst->tile.active_tab = dst->tile.nwindows - 1;
