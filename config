@@ -8,10 +8,10 @@
 tab_bar_height      = 22
 border_width        = 1
 border_gap          = 2
-bar_pos_top         = 0        # 0 = bottom, 1 = top
-bar_height          = 24
-bbar_pos_top        = 1        # hex-time bar: 0 = bottom, 1 = top
-bottom_bar_height   = 14
+statusbar_pos        = 0        # 0 = bottom, 1 = top
+statusbar_height          = 24
+timebar_pos        = 1        # hex-time bar: 0 = bottom, 1 = top
+timebar_height   = 14
 bar_update_interval = 1.0
 
 # ===== Commands =====
@@ -23,13 +23,13 @@ launcher     = dmenu_run
 
 # ===== Colours — status bar =====
 
-col_bar_bg          = #1E1E1E
-col_bar_fg          = #FFBF00
-col_bar_ws_active   = #fbe7ac
-col_bar_ws_inactive = #555555
-col_bar_ws_occupied = #888888
-col_bar_ws_fg_act   = #000000
-col_bar_ws_fg_inact = #AAAAAA
+col_statusbar_bg          = #1E1E1E
+col_statusbar_fg          = #FFBF00
+col_statusbar_ws_active   = #fbe7ac
+col_statusbar_ws_inactive = #555555
+col_statusbar_ws_occupied = #888888
+col_statusbar_ws_fg_act   = #000000
+col_statusbar_ws_fg_inact = #AAAAAA
 
 # ===== Colours — tab bar =====
 
@@ -49,9 +49,9 @@ col_desktop_bg      = #000000
 
 # ===== Colours — bottom hex-time bar =====
 
-col_bbar_bg    = #1E1E1E
-col_bbar_hour  = #CC3300
-col_bbar_hex   = #00CC66
-col_bbar_seg   = #CCAA00
-col_bbar_label = #FFFFFF
-col_bbar_track = #333333
+col_timebar_bg    = #1E1E1E
+col_timebar_hour  = #CC3300
+col_timebar_hex   = #00CC66
+col_timebar_seg   = #CCAA00
+col_timebar_label = #FFFFFF
+col_timebar_track = #333333
