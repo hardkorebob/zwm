@@ -9,7 +9,7 @@ Hello, everybody. I just wanted to show off the project that I made with Claude 
 - Binary tree tiling with manual horizontal/vertical splits
 - Tabbed windows within each tile
 - 9 workspaces
-- Status bar with workspace indicators, CPU, RAM, IP, volume
+- Status bar with workspace indicators, CPU, RAM, IP, Volume (mouse-wheel to adjust)
 - Time bar with hex-time (block of 3m 45s * 16 = One hour; Blocks 0-F)
 - EWMH fullscreen support
 - IPC via Unix domain socket (`zwmctl`)
@@ -19,11 +19,11 @@ Hello, everybody. I just wanted to show off the project that I made with Claude 
 
 ## Build
 
+Requires `libX11-dev`.
+
 ```
 cc -O2 -o zwm zwm.c -lX11
 ```
-
-Requires `libX11-dev` (or equivalent) and a C compiler.
 
 ## Install
 
@@ -34,28 +34,6 @@ Copy to your `$PATH`: `zwm` and `zwmctl`(requires `socat`). X session file goes 
 Config file location: `$XDG_CONFIG_HOME/zwm/config` or `~/.config/zwm/config`.
 
 Format is `key = value`, one per line. Lines starting with `#` are comments.
-
-### Dimensions
-
-| Key                 | Default | Description                      |
-|-----------------------|-----|------------------------------------|
-| `tab_bar_height`      | 22  |  Height of tab bars in pixels      |
-| `border_width`        | 1   |  Border width around tiles         |
-| `border_gap`          | 2   |  Gap between tiles                 |
-| `statusbar_height`    | 24  |  Status bar height (0 to disable)  |
-| `statusbar_pos`       | 0   |  0 = bottom, 1 = top               |
-| `timebar_height`      | 14  |  Hex-time bar height               |
-| `timebar_pos`         | 1   |  0 = bottom, 1 = top               |
-| `bar_update_interval` | 1.0 |  Bar refresh interval in seconds   |
-
-### Commands
-
-| Key            | Default   |
-|----------------|-----------|
-| `terminal`     | xterm     |
-| `file_manager` | thunar    |
-| `browser`      | firefox   |
-| `launcher`     | dmenu_run |
 
 ## Keybindings
 
@@ -115,7 +93,30 @@ Pipe mode:
 
 ```
 echo "next-tab" | zwmctl -
+
 ```
+
+### Dimensions
+
+| Key                 | Default | Description                      |
+|-----------------------|-----|------------------------------------|
+| `tab_bar_height`      | 22  |  Height of tab bars in pixels      |
+| `border_width`        | 1   |  Border width around tiles         |
+| `border_gap`          | 2   |  Gap between tiles                 |
+| `statusbar_height`    | 24  |  Status bar height (0 to disable)  |
+| `statusbar_pos`       | 0   |  0 = bottom, 1 = top               |
+| `timebar_height`      | 14  |  Hex-time bar height               |
+| `timebar_pos`         | 1   |  0 = bottom, 1 = top               |
+| `bar_update_interval` | 1.0 |  Bar refresh interval in seconds   |
+
+### Commands
+
+| Key            | Default   |
+|----------------|-----------|
+| `terminal`     | xterm     |
+| `file_manager` | thunar    |
+| `browser`      | firefox   |
+| `launcher`     | dmenu_run |
 
 ## License
 
