@@ -89,13 +89,13 @@ static Config cfg;
 
 static void cfg_defaults(void)
 {
-    cfg.tab_bar_height     = 22;
-    cfg.border_width       = 1;
-    cfg.border_gap         = 2;
-    cfg.statusbar_height         = 24;
-    cfg.statusbar_pos        = 0;
-    cfg.timebar_pos       = 1;
-    cfg.timebar_height  = 14;
+    cfg.tab_bar_height      = 22;
+    cfg.border_width        = 1;
+    cfg.border_gap          = 2;
+    cfg.statusbar_height    = 24;
+    cfg.statusbar_pos       = 0;
+    cfg.timebar_pos         = 1;
+    cfg.timebar_height      = 14;
     cfg.bar_update_interval = 1.0;
 
     strncpy(cfg.terminal_cmd, "xterm",     sizeof(cfg.terminal_cmd) - 1);
