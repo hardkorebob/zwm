@@ -1,4 +1,5 @@
 #!/bin/sh
 # SWM session launcher — called by LightDM / display manager.
-
+# Startup programs can go here
+# redshift -O 4000
 exec swm
