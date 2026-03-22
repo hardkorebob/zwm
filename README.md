@@ -1,4 +1,4 @@
-# ZWM
+# SWM
 
 A tabbed manual-tiling window manager for X11. No dependencies beyond Xlib. Inspired by Notion and TinyWM.
 
@@ -12,8 +12,8 @@ Hello, everybody. I just wanted to show off the project that I made with Claude 
 - Status bar with workspace indicators, CPU, RAM, IP, Volume (mouse-wheel to adjust)
 - Time bar with hex-time (block of 3m 45s * 16 = One hour; Blocks 0-F)
 - EWMH fullscreen support
-- IPC via Unix domain socket (`zwmctl`)
-- Runtime config reload (SIGHUP or `zwmctl reload`)
+- IPC via Unix domain socket (`swmctl`)
+- Runtime config reload (SIGHUP or `swmctl reload`)
 - Click-to-focus, click on tab bar to switch tabs
 - Raise only using Mod4+Arrow (Amiga-style)
 
@@ -22,16 +22,16 @@ Hello, everybody. I just wanted to show off the project that I made with Claude 
 Requires `libX11-dev` library & `-misc-fixed-medium-r-*-*-13-*-*-*-*-*-iso8859-1` font
 
 ```
-cc -O2 -o zwm zwm.c -lX11
+cc -O2 -o swm swm.c -lX11
 ```
 
 ## Install
 
-Copy to your `$PATH`: `zwm` and `zwmctl`(requires `socat`). X session file goes in `/usr/share/xsessions`
+Copy to your `$PATH`: `swm` and `swmctl`(requires `socat`). X session file goes in `/usr/share/xsessions`
 
 ## Configuration
 
-Config file location: `$XDG_CONFIG_HOME/zwm/config` or `~/.config/zwm/config`.
+Config file location: `$XDG_CONFIG_HOME/swm/config` or `~/.config/swm/config`.
 
 Format is `key = value`, one per line. Lines starting with `#` are comments.
 
@@ -75,24 +75,24 @@ Format is `key = value`, one per line. Lines starting with `#` are comments.
 
 ## IPC
 
-ZWM listens on a Unix socket at `$XDG_RUNTIME_DIR/zwm.sock` (fallback: `/tmp/zwm.sock`). This part is quirky, but I like it because it reminds me of Plan9. And you can use it for a startup script so that you can create your own layouts automatically. 
+ZWM listens on a Unix socket at `$XDG_RUNTIME_DIR/swm.sock` (fallback: `/tmp/swm.sock`). This part is quirky, but I like it because it reminds me of Plan9. And you can use it for a startup script so that you can create your own layouts automatically. 
 
-Use `zwmctl` to send commands:(no arguments to see help)
+Use `swmctl` to send commands:(no arguments to see help)
 
 ```
-zwmctl split h
-zwmctl workspace 3
-zwmctl exec rofi -show run
-zwmctl query win-title
-zwmctl set border_gap 6
-zwmctl reload
-zwmctl fullscreen
+swmctl split h
+swmctl workspace 3
+swmctl exec rofi -show run
+swmctl query win-title
+swmctl set border_gap 6
+swmctl reload
+swmctl fullscreen
 ```
 
 Pipe mode:
 
 ```
-echo "next-tab" | zwmctl -
+echo "next-tab" | swmctl -
 ```
 
 ### Dimensions
