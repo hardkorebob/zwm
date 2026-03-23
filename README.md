@@ -21,7 +21,7 @@ Hello, everybody. I just wanted to show off the project that I made with Claude 
 
 ## Build & Install
 
-Requires `libX11-dev` library & `-misc-fixed-medium-r-*-*-13-*-*-*-*-*-iso8859-1` bitmap font.
+Requires `libX11-dev` library & `-misc-fixed-medium-r-*-*-13-*-*-*-*-*-iso8859-1` bitmap font (pre-installed with X11...no worries). 
 
 `chmod +x install.sh`
 
