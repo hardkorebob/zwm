@@ -15,6 +15,7 @@ bind = F7                  spawn launcher
 bind = F8                  spawn file_manager
 bind = F9                  spawn browser
 bind = F10                 spawn terminal
+bind = Mod4+Return         spawn "xterm -e /bin/bash -c htop"
 bind = Mod4+r              spawn reload
 bind = Mod4+h              split_h
 bind = Mod4+v              split_v
