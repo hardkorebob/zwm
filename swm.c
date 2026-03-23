@@ -8,6 +8,7 @@
 #include <X11/keysym.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stddef.h>
 #include <string.h>
 #include <unistd.h>
 #include <signal.h>
@@ -26,11 +27,10 @@
 #define CMD_SOCK_PATH       "/tmp/swm.sock"
 #define CMD_MAX_CLIENTS     8
 #define CMD_BUF_SIZE        512
-#define MAX_WINS_PER_TILE   64
 #define MAX_TILES           256
 #define MAX_MANAGED         512
 #define MAX_SET             512
-#define MAX_COLORS          32
+#define MAX_COLORS          256
 #define MAX_BINDINGS        64
 
 /* ===== Runtime configuration ===== */
@@ -59,7 +59,7 @@ typedef struct {
     unsigned    mod;        /* required modifiers (e.g. Mod4Mask, Mod4Mask|ShiftMask, 0) */
     Action      action;
     int         iarg;
-    char        sarg[32];   /* owned string arg (direction, custom cmd, etc.) */
+    char       *sarg;       /* heap-allocated string arg (direction, custom cmd, etc.) */
 } Keybind;
 
 typedef struct {
@@ -118,10 +118,10 @@ typedef struct {
 
 static Config cfg;
 
-static void sarg_copy(char *dst, size_t dsz, const char *src)
+static void sarg_set(char **dst, const char *src)
 {
-    dst[0] = '\0';
-    if (src) { strncpy(dst, src, dsz - 1); dst[dsz - 1] = '\0'; }
+    free(*dst);
+    *dst = (src && *src) ? strdup(src) : NULL;
 }
 
 static void cfg_defaults(void)
@@ -174,11 +174,13 @@ static void cfg_defaults(void)
     #undef SETCOL
 
     /* Default keybindings */
+    /* Free any previous sarg allocations before resetting binds */
+    for (int i = 0; i < cfg.n_binds; i++) free(cfg.binds[i].sarg);
     cfg.n_binds = 0;
     #define B(k, m, a, i, s) do { \
         Keybind *b = &cfg.binds[cfg.n_binds++]; \
         b->key = (k); b->mod = (m); b->action = (a); b->iarg = (i); \
-        sarg_copy(b->sarg, sizeof(b->sarg), (s)); \
+        b->sarg = NULL; sarg_set(&b->sarg, (s)); \
     } while(0)
 
     /* F-keys — no modifier */
@@ -229,6 +231,17 @@ static void cfg_defaults(void)
 }
 
 /* ===== Keybinding config parser ===== */
+
+/* Strip surrounding single or double quotes from a string in-place. */
+static void strip_quotes(char *s)
+{
+    size_t len = strlen(s);
+    if (len >= 2 && ((s[0] == '"' && s[len-1] == '"') ||
+                     (s[0] == '\'' && s[len-1] == '\''))) {
+        memmove(s, s + 1, len - 2);
+        s[len - 2] = '\0';
+    }
+}
 
 /* Map modifier name → X mask.  Returns 0 if unrecognised. */
 static unsigned parse_mod_token(const char *s)
@@ -321,6 +334,7 @@ static int cfg_parse_bind(const char *val)
         if (arg) {
             char *e = arg + strlen(arg) - 1;
             while (e > arg && (*e == ' ' || *e == '\t')) *e-- = '\0';
+            strip_quotes(arg);
         }
     }
 
@@ -386,7 +400,7 @@ static int cfg_parse_bind(const char *val)
                 } else {
                     /* Custom command in sarg */
                     b->iarg = -1;
-                    strncpy(b->sarg, arg, sizeof(b->sarg) - 1);
+                    sarg_set(&b->sarg, arg);
                 }
             }
             break;
@@ -398,7 +412,7 @@ static int cfg_parse_bind(const char *val)
             break;
         case ACT_FOCUS_DIR:
         case ACT_MOVE_WIN_DIR:
-            if (arg) strncpy(b->sarg, arg, sizeof(b->sarg) - 1);
+            if (arg) sarg_set(&b->sarg, arg);
             break;
         default:
             break;
@@ -427,6 +441,35 @@ static int cfg_resolve_path(char *out, int len)
 }
 
 /* Parse a single key=value pair into cfg.  Returns 1 if recognised, 0 if not. */
+
+/* Color config name → offset table (used by set and get) */
+static const struct { const char *name; size_t off; } col_map[] = {
+    { "col_statusbar_bg",          offsetof(Config, col_statusbar_bg) },
+    { "col_statusbar_fg",          offsetof(Config, col_statusbar_fg) },
+    { "col_statusbar_ws_active",   offsetof(Config, col_statusbar_ws_active) },
+    { "col_statusbar_ws_inactive", offsetof(Config, col_statusbar_ws_inactive) },
+    { "col_statusbar_ws_occupied", offsetof(Config, col_statusbar_ws_occupied) },
+    { "col_statusbar_ws_fg_act",   offsetof(Config, col_statusbar_ws_fg_act) },
+    { "col_statusbar_ws_fg_inact", offsetof(Config, col_statusbar_ws_fg_inact) },
+    { "col_tab_active_bg",         offsetof(Config, col_tab_active_bg) },
+    { "col_tab_inactive_bg",       offsetof(Config, col_tab_inactive_bg) },
+    { "col_tab_active_fg",         offsetof(Config, col_tab_active_fg) },
+    { "col_tab_inactive_fg",       offsetof(Config, col_tab_inactive_fg) },
+    { "col_tab_bar_bg",            offsetof(Config, col_tab_bar_bg) },
+    { "col_tab_active_bg_dim",     offsetof(Config, col_tab_active_bg_dim) },
+    { "col_tab_active_fg_dim",     offsetof(Config, col_tab_active_fg_dim) },
+    { "col_border_active",         offsetof(Config, col_border_active) },
+    { "col_border_inactive",       offsetof(Config, col_border_inactive) },
+    { "col_desktop_bg",            offsetof(Config, col_desktop_bg) },
+    { "col_timebar_bg",            offsetof(Config, col_timebar_bg) },
+    { "col_timebar_hour",          offsetof(Config, col_timebar_hour) },
+    { "col_timebar_hex",           offsetof(Config, col_timebar_hex) },
+    { "col_timebar_seg",           offsetof(Config, col_timebar_seg) },
+    { "col_timebar_label",         offsetof(Config, col_timebar_label) },
+    { "col_timebar_track",         offsetof(Config, col_timebar_track) },
+    { NULL, 0 }
+};
+
 static int cfg_set_kv(const char *key, const char *val)
 {
     /* Integers */
@@ -451,29 +494,13 @@ static int cfg_set_kv(const char *key, const char *val)
     /* Colors — validate: must start with # and be 7 chars escape: with swmctl set col_statusbar_bg "#FF0000" "*/
     if (val[0] != '#' || strlen(val) < 7) return 0;
 
-    if (strcmp(key, "col_statusbar_bg") == 0)            { strncpy(cfg.col_statusbar_bg,          val, 7); return 1; }
-    if (strcmp(key, "col_statusbar_fg") == 0)            { strncpy(cfg.col_statusbar_fg,          val, 7); return 1; }
-    if (strcmp(key, "col_statusbar_ws_active") == 0)     { strncpy(cfg.col_statusbar_ws_active,   val, 7); return 1; }
-    if (strcmp(key, "col_statusbar_ws_inactive") == 0)   { strncpy(cfg.col_statusbar_ws_inactive, val, 7); return 1; }
-    if (strcmp(key, "col_statusbar_ws_occupied") == 0)   { strncpy(cfg.col_statusbar_ws_occupied, val, 7); return 1; }
-    if (strcmp(key, "col_statusbar_ws_fg_act") == 0)     { strncpy(cfg.col_statusbar_ws_fg_act,   val, 7); return 1; }
-    if (strcmp(key, "col_statusbar_ws_fg_inact") == 0)   { strncpy(cfg.col_statusbar_ws_fg_inact, val, 7); return 1; }
-    if (strcmp(key, "col_tab_active_bg") == 0)           { strncpy(cfg.col_tab_active_bg,         val, 7); return 1; }
-    if (strcmp(key, "col_tab_inactive_bg") == 0)         { strncpy(cfg.col_tab_inactive_bg,       val, 7); return 1; }
-    if (strcmp(key, "col_tab_active_fg") == 0)           { strncpy(cfg.col_tab_active_fg,         val, 7); return 1; }
-    if (strcmp(key, "col_tab_inactive_fg") == 0)         { strncpy(cfg.col_tab_inactive_fg,       val, 7); return 1; }
-    if (strcmp(key, "col_tab_bar_bg") == 0)              { strncpy(cfg.col_tab_bar_bg,            val, 7); return 1; }
-    if (strcmp(key, "col_tab_active_bg_dim") == 0)       { strncpy(cfg.col_tab_active_bg_dim,     val, 7); return 1; }
-    if (strcmp(key, "col_tab_active_fg_dim") == 0)       { strncpy(cfg.col_tab_active_fg_dim,     val, 7); return 1; }
-    if (strcmp(key, "col_border_active") == 0)           { strncpy(cfg.col_border_active,         val, 7); return 1; }
-    if (strcmp(key, "col_border_inactive") == 0)         { strncpy(cfg.col_border_inactive,       val, 7); return 1; }
-    if (strcmp(key, "col_desktop_bg") == 0)              { strncpy(cfg.col_desktop_bg,            val, 7); return 1; }
-    if (strcmp(key, "col_timebar_bg") == 0)              { strncpy(cfg.col_timebar_bg,            val, 7); return 1; }
-    if (strcmp(key, "col_timebar_hour") == 0)            { strncpy(cfg.col_timebar_hour,          val, 7); return 1; }
-    if (strcmp(key, "col_timebar_hex") == 0)             { strncpy(cfg.col_timebar_hex,           val, 7); return 1; }
-    if (strcmp(key, "col_timebar_seg") == 0)             { strncpy(cfg.col_timebar_seg,           val, 7); return 1; }
-    if (strcmp(key, "col_timebar_label") == 0)           { strncpy(cfg.col_timebar_label,         val, 7); return 1; }
-    if (strcmp(key, "col_timebar_track") == 0)           { strncpy(cfg.col_timebar_track,         val, 7); return 1; }
+    for (int i = 0; col_map[i].name; i++) {
+        if (strcmp(key, col_map[i].name) == 0) {
+            memcpy((char *)&cfg + col_map[i].off, val, 7);
+            ((char *)&cfg + col_map[i].off)[7] = '\0';
+            return 1;
+        }
+    }
 
     return 0;
 }
@@ -518,9 +545,13 @@ static int cfg_load(const char *path)
         char *vend = val + strlen(val) - 1;
         while (vend > val && (*vend == ' ' || *vend == '\t')) *vend-- = '\0';
 
+        /* Strip surrounding quotes */
+        strip_quotes(val);
+
         /* Replace-all: first bind line wipes default keybindings */
         if (strcmp(p, "bind") == 0 && !seen_bind) {
             seen_bind = 1;
+            for (int bi = 0; bi < cfg.n_binds; bi++) free(cfg.binds[bi].sarg);
             cfg.n_binds = 0;
         }
 
@@ -532,6 +563,8 @@ static int cfg_load(const char *path)
 
 /* SIGHUP handler — sets a flag checked in the event loop */
 static volatile sig_atomic_t reload_pending;
+/* Deferred config apply — coalesces batched "set" commands */
+static int apply_pending;
 
 static void on_sighup(int sig) { (void)sig; reload_pending = 1; }
 
@@ -549,8 +582,9 @@ typedef struct Node {
     struct Node *parent;
     union {
         struct {                        /* NODE_TILE */
-            Window windows[MAX_WINS_PER_TILE];
+            Window *windows;            /* heap-allocated */
             int    nwindows;
+            int    win_cap;             /* allocated capacity */
             int    active_tab;
             Window tab_bar_win;
             Window frame_win;
@@ -567,6 +601,11 @@ typedef struct {
     int   sw, sh, tile_y, tile_h;
     Node *root;
     Node *active_tile;
+    Window fullscreen_win;              /* per-workspace fullscreen tracking */
+    /* Cached tile list — avoids repeated tree walks */
+    Node *cached_tiles[MAX_TILES];
+    int   n_cached_tiles;
+    int   tiles_dirty;                  /* 1 = cache needs rebuild */
 } Workspace;
 
 typedef struct { Window wid; int ws; } ManagedEntry;
@@ -607,14 +646,11 @@ static int           n_colors;
 
 /* Cached atoms */
 static Atom a_net_wm_name, a_utf8, a_wm_protocols, a_wm_delete;
-static Atom a_strut, a_strut_partial, a_wm_type, a_wm_type_dock;
+static Atom a_wm_type, a_wm_type_dock;
 static Atom a_net_wm_state, a_net_wm_state_fullscreen;
-static Atom a_wm_type_splash, a_wm_type_dialog, a_wm_type_utility;
-static Atom a_wm_type_toolbar, a_wm_type_tooltip, a_wm_type_notification;
-static Atom a_wm_type_popup_menu, a_wm_transient_for;
-
-/* For restart */
-static char **saved_argv;
+static Atom a_wm_type_splash, a_wm_type_dialog;
+static Atom a_wm_type_tooltip, a_wm_type_notification;
+static Atom a_wm_type_popup_menu;
 
 /* ===== Keybinding helpers ===== */
 
@@ -624,8 +660,14 @@ static char **saved_argv;
 /* EWMH check window */
 static Window ewmh_check_win;
 
-/* Fullscreen tracking */
-static Window fullscreen_win;   /* currently fullscreened window, or None */
+/* Persistent GC for drawing — allocated once, reused everywhere */
+static GC draw_gc;
+
+/* Cached bar info — refreshed every BAR_INFO_INTERVAL seconds */
+#define BAR_INFO_INTERVAL 180.0
+static int    cached_volume;
+static char   cached_ip[64];
+static double last_bar_info_update;
 
 /* ===== Command socket state ===== */
 
@@ -715,7 +757,12 @@ static int tile_has(Node *t, Window w)
 }
 static void tile_add(Node *t, Window w)
 {
-    if (t->tile.nwindows < MAX_WINS_PER_TILE) t->tile.windows[t->tile.nwindows++] = w;
+    if (t->tile.nwindows >= t->tile.win_cap) {
+        t->tile.win_cap = t->tile.win_cap ? t->tile.win_cap * 2 : 4;
+        t->tile.windows = realloc(t->tile.windows,
+                                  (size_t)t->tile.win_cap * sizeof(Window));
+    }
+    t->tile.windows[t->tile.nwindows++] = w;
 }
 static void tile_remove(Node *t, Window w)
 {
@@ -760,6 +807,8 @@ static Node *node_new_tile(int x, int y, int w, int h)
     Node *n = calloc(1, sizeof(Node));
     n->type = NODE_TILE;
     n->x = x; n->y = y; n->w = w; n->h = h;
+    n->tile.win_cap = 4;
+    n->tile.windows = calloc((size_t)n->tile.win_cap, sizeof(Window));
     n->tile.tab_bar_win = None;
     n->tile.frame_win = None;
     return n;
@@ -780,6 +829,8 @@ static void node_free_tree(Node *n)
     if (n->type == NODE_SPLIT) {
         node_free_tree(n->split.children[0]);
         node_free_tree(n->split.children[1]);
+    } else if (n->type == NODE_TILE) {
+        free(n->tile.windows);
     }
     free(n);
 }
@@ -794,11 +845,23 @@ static int collect_tiles(Node *node, Node **buf, int max)
     return n;
 }
 
-/* Find tile containing window wid in workspace ws. */
-static Node *ws_find_tile(Workspace *ws, Window wid)
+/* Cached tile list — avoids repeated tree walks. */
+static void ws_invalidate_tiles(Workspace *w) { w->tiles_dirty = 1; }
+
+static int ws_get_tiles(Workspace *w, Node ***out)
 {
-    Node *tiles[MAX_TILES];
-    int n = collect_tiles(ws->root, tiles, MAX_TILES);
+    if (w->tiles_dirty) {
+        w->n_cached_tiles = collect_tiles(w->root, w->cached_tiles, MAX_TILES);
+        w->tiles_dirty = 0;
+    }
+    *out = w->cached_tiles;
+    return w->n_cached_tiles;
+}
+
+/* Find tile containing window wid in workspace ws. */
+static Node *ws_find_tile(Workspace *w, Window wid)
+{
+    Node **tiles; int n = ws_get_tiles(w, &tiles);
     for (int i = 0; i < n; i++)
         for (int j = 0; j < tiles[i]->tile.nwindows; j++)
             if (tiles[i]->tile.windows[j] == wid) return tiles[i];
@@ -806,10 +869,9 @@ static Node *ws_find_tile(Workspace *ws, Window wid)
 }
 
 /* Does workspace have any windows? */
-static int ws_has_windows(Workspace *ws)
+static int ws_has_windows(Workspace *w)
 {
-    Node *tiles[MAX_TILES];
-    int n = collect_tiles(ws->root, tiles, MAX_TILES);
+    Node **tiles; int n = ws_get_tiles(w, &tiles);
     for (int i = 0; i < n; i++)
         if (tiles[i]->tile.nwindows > 0) return 1;
     return 0;
@@ -912,6 +974,7 @@ static void unmanage_window(Window wid);
 static void cmd_init(void);
 static void cmd_cleanup(void);
 static void cmd_poll(fd_set *fds);
+void action_switch_workspace(int n);
 
 /* ===== EWMH support ===== */
 
@@ -962,8 +1025,8 @@ static void cleanup_ewmh(void)
 
 static void fullscreen_enter(Window wid)
 {
-    if (fullscreen_win != None) return;   /* already fullscreened */
-    fullscreen_win = wid;
+    if (ws()->fullscreen_win != None) return;   /* already fullscreened */
+    ws()->fullscreen_win = wid;
 
     /* Set the EWMH state property on the window */
     XChangeProperty(dpy, wid, a_net_wm_state, XA_ATOM, 32,
@@ -972,8 +1035,7 @@ static void fullscreen_enter(Window wid)
     /* Hide bar, tab bars, frames */
     if (status_bar_win != None) XUnmapWindow(dpy, status_bar_win);
     if (bottom_bar_win != None) XUnmapWindow(dpy, bottom_bar_win);
-    Node *tiles[MAX_TILES];
-    int n = collect_tiles(ws()->root, tiles, MAX_TILES);
+    Node **tiles; int n = ws_get_tiles(ws(), &tiles);
     for (int i = 0; i < n; i++) {
         if (tiles[i]->tile.tab_bar_win != None) XUnmapWindow(dpy, tiles[i]->tile.tab_bar_win);
         if (tiles[i]->tile.frame_win   != None) XUnmapWindow(dpy, tiles[i]->tile.frame_win);
@@ -992,8 +1054,8 @@ static void fullscreen_enter(Window wid)
 
 static void fullscreen_exit(Window wid)
 {
-    if (fullscreen_win == None || fullscreen_win != wid) return;
-    fullscreen_win = None;
+    if (ws()->fullscreen_win == None || ws()->fullscreen_win != wid) return;
+    ws()->fullscreen_win = None;
 
     /* Remove the EWMH state property */
     XChangeProperty(dpy, wid, a_net_wm_state, XA_ATOM, 32,
@@ -1018,7 +1080,7 @@ static void fullscreen_exit(Window wid)
 
 static void fullscreen_toggle(Window wid)
 {
-    if (fullscreen_win == wid)
+    if (ws()->fullscreen_win == wid)
         fullscreen_exit(wid);
     else
         fullscreen_enter(wid);
@@ -1187,9 +1249,8 @@ static void bar_draw(void)
     Pixmap pm = XCreatePixmap(dpy, status_bar_win, (unsigned)w, (unsigned)h, (unsigned)depth);
 
     /* Background */
-    GC gc = XCreateGC(dpy, pm, 0, NULL);
-    XSetForeground(dpy, gc, px(cfg.col_statusbar_bg));
-    XFillRectangle(dpy, pm, gc, 0, 0, (unsigned)w, (unsigned)h);
+    XSetForeground(dpy, draw_gc, px(cfg.col_statusbar_bg));
+    XFillRectangle(dpy, pm, draw_gc, 0, 0, (unsigned)w, (unsigned)h);
 
     int pad = 6, ws_w = 22, ws_gap = 3, text_y = h/2 + 4;
 
@@ -1203,43 +1264,46 @@ static void bar_draw(void)
         else if (has_w)  { bg_col = cfg.col_statusbar_ws_occupied;  fg_col = cfg.col_statusbar_ws_fg_act; }
         else             { bg_col = cfg.col_statusbar_ws_inactive;  fg_col = cfg.col_statusbar_ws_fg_inact; }
 
-        XSetForeground(dpy, gc, px(bg_col));
-        XFillRectangle(dpy, pm, gc, x, 2, (unsigned)ws_w, (unsigned)(h - 4));
+        XSetForeground(dpy, draw_gc, px(bg_col));
+        XFillRectangle(dpy, pm, draw_gc, x, 2, (unsigned)ws_w, (unsigned)(h - 4));
 
-        XSetForeground(dpy, gc, px(fg_col));
-        XSetFont(dpy, gc, font->fid);
+        XSetForeground(dpy, draw_gc, px(fg_col));
+        XSetFont(dpy, draw_gc, font->fid);
         char label[2] = { (char)('1' + i), '\0' };
-        XDrawString(dpy, pm, gc, x + ws_w/2 - 3, text_y, label, 1);
+        XDrawString(dpy, pm, draw_gc, x + ws_w/2 - 3, text_y, label, 1);
 
         x += ws_w + ws_gap;
     }
 
-    /* Right: status text */
+    /* Right: status text — volume and IP refreshed every 3 minutes */
     cpu_pct = bar_read_cpu();
     double ram_pct = bar_read_ram();
-    char ip[64]; bar_read_ip(ip, sizeof(ip));
+    double now_mono = mono_time();
+    if (now_mono - last_bar_info_update >= BAR_INFO_INTERVAL || last_bar_info_update == 0) {
+        cached_volume = bar_read_volume();
+        bar_read_ip(cached_ip, sizeof(cached_ip));
+        last_bar_info_update = now_mono;
+    }
     time_t now = time(NULL);
     struct tm *tm = localtime(&now);
     char timebuf[64];
     strftime(timebuf, sizeof(timebuf), "%a %b %d  %H:%M", tm);
-    int vol = bar_read_volume();
     char vol_str[32];
-    if (vol >= 0) snprintf(vol_str, sizeof(vol_str), "VOL %d%%", vol);
-    else          snprintf(vol_str, sizeof(vol_str), "VOL ?");
+    if (cached_volume >= 0) snprintf(vol_str, sizeof(vol_str), "VOL %d%%", cached_volume);
+    else                    snprintf(vol_str, sizeof(vol_str), "VOL ?");
 
     char status[256];
     snprintf(status, sizeof(status), "%s   CPU %.0f%%   RAM %.0f%%   %s   %s",
-             vol_str, cpu_pct, ram_pct, ip, timebuf);
+             vol_str, cpu_pct, ram_pct, cached_ip, timebuf);
 
     int text_w = (int)strlen(status) * 7;
     int tx = w - text_w - pad;
-    XSetForeground(dpy, gc, px(cfg.col_statusbar_fg));
-    XSetFont(dpy, gc, font->fid);
-    XDrawString(dpy, pm, gc, tx, text_y, status, (int)strlen(status));
+    XSetForeground(dpy, draw_gc, px(cfg.col_statusbar_fg));
+    XSetFont(dpy, draw_gc, font->fid);
+    XDrawString(dpy, pm, draw_gc, tx, text_y, status, (int)strlen(status));
 
     /* Blit */
-    XCopyArea(dpy, pm, status_bar_win, gc, 0, 0, (unsigned)w, (unsigned)h, 0, 0);
-    XFreeGC(dpy, gc);
+    XCopyArea(dpy, pm, status_bar_win, draw_gc, 0, 0, (unsigned)w, (unsigned)h, 0, 0);
     XFreePixmap(dpy, pm);
     XFlush(dpy);
 }
@@ -1256,7 +1320,6 @@ static void bar_handle_click(XEvent *ev)
     for (int i = 0; i < NUM_WORKSPACES; i++) {
         if (cx >= x && cx < x + ws_w) {
             /* action_switch_workspace(i) — forward-declared below */
-            extern void action_switch_workspace(int n);
             action_switch_workspace(i);
             return;
         }
@@ -1301,11 +1364,10 @@ static void bottom_bar_draw(void)
     XRaiseWindow(dpy, bottom_bar_win);
 
     Pixmap pm = XCreatePixmap(dpy, bottom_bar_win, (unsigned)w, (unsigned)h, (unsigned)depth);
-    GC gc = XCreateGC(dpy, pm, 0, NULL);
 
     /* Background */
-    XSetForeground(dpy, gc, px(cfg.col_timebar_bg));
-    XFillRectangle(dpy, pm, gc, 0, 0, (unsigned)w, (unsigned)h);
+    XSetForeground(dpy, draw_gc, px(cfg.col_timebar_bg));
+    XFillRectangle(dpy, pm, draw_gc, 0, 0, (unsigned)w, (unsigned)h);
 
     /* Get current time in local time */
     time_t now_t = time(NULL);
@@ -1326,18 +1388,12 @@ static void bottom_bar_draw(void)
 
     const char *hex_chars = "0123456789ABCDEF";
 
-    /* Layout: 3 bars side by side
-     * Bar 1 (hour):  label + fill
-     * Bar 2 (hex):   label + fill
-     * Bar 3 (seg):   fill only, no label
-     * Labels take ~16px width, 2px gap after label */
     int label_w = 16;
     int gap = 2;
     int bar_y = 1;
     int bar_h = h - 2;
     if (bar_h < 1) bar_h = 1;
 
-    /* Divide screen into 3 equal zones */
     int zone_w = w / 3;
 
     /* --- Bar 1: Hour (red) --- */
@@ -1347,23 +1403,20 @@ static void bottom_bar_draw(void)
         int fill_w = zone_w - label_w - gap - gap;
         if (fill_w < 1) fill_w = 1;
 
-        /* Track */
-        XSetForeground(dpy, gc, px(cfg.col_timebar_track));
-        XFillRectangle(dpy, pm, gc, fill_x, bar_y, (unsigned)fill_w, (unsigned)bar_h);
+        XSetForeground(dpy, draw_gc, px(cfg.col_timebar_track));
+        XFillRectangle(dpy, pm, draw_gc, fill_x, bar_y, (unsigned)fill_w, (unsigned)bar_h);
 
-        /* Fill */
         int fw = (int)(fill_w * hour_pct);
         if (fw > 0) {
-            XSetForeground(dpy, gc, px(cfg.col_timebar_hour));
-            XFillRectangle(dpy, pm, gc, fill_x, bar_y, (unsigned)fw, (unsigned)bar_h);
+            XSetForeground(dpy, draw_gc, px(cfg.col_timebar_hour));
+            XFillRectangle(dpy, pm, draw_gc, fill_x, bar_y, (unsigned)fw, (unsigned)bar_h);
         }
 
-        /* Label */
         char lbl[12];
         snprintf(lbl, sizeof(lbl), "%d", hours12);
-        XSetForeground(dpy, gc, px(cfg.col_timebar_label));
-        XSetFont(dpy, gc, font->fid);
-        XDrawString(dpy, pm, gc, x0 + 2, bar_y + bar_h - 1, lbl, (int)strlen(lbl));
+        XSetForeground(dpy, draw_gc, px(cfg.col_timebar_label));
+        XSetFont(dpy, draw_gc, font->fid);
+        XDrawString(dpy, pm, draw_gc, x0 + 2, bar_y + bar_h - 1, lbl, (int)strlen(lbl));
     }
 
     /* --- Bar 2: Hex minute block (green) --- */
@@ -1373,22 +1426,19 @@ static void bottom_bar_draw(void)
         int fill_w = zone_w - label_w - gap - gap;
         if (fill_w < 1) fill_w = 1;
 
-        /* Track */
-        XSetForeground(dpy, gc, px(cfg.col_timebar_track));
-        XFillRectangle(dpy, pm, gc, fill_x, bar_y, (unsigned)fill_w, (unsigned)bar_h);
+        XSetForeground(dpy, draw_gc, px(cfg.col_timebar_track));
+        XFillRectangle(dpy, pm, draw_gc, fill_x, bar_y, (unsigned)fill_w, (unsigned)bar_h);
 
-        /* Fill */
         int fw = (int)(fill_w * hex_pct);
         if (fw > 0) {
-            XSetForeground(dpy, gc, px(cfg.col_timebar_hex));
-            XFillRectangle(dpy, pm, gc, fill_x, bar_y, (unsigned)fw, (unsigned)bar_h);
+            XSetForeground(dpy, draw_gc, px(cfg.col_timebar_hex));
+            XFillRectangle(dpy, pm, draw_gc, fill_x, bar_y, (unsigned)fw, (unsigned)bar_h);
         }
 
-        /* Label */
         char lbl[2] = { hex_chars[hex_segment], '\0' };
-        XSetForeground(dpy, gc, px(cfg.col_timebar_label));
-        XSetFont(dpy, gc, font->fid);
-        XDrawString(dpy, pm, gc, x0 + 2, bar_y + bar_h - 1, lbl, 1);
+        XSetForeground(dpy, draw_gc, px(cfg.col_timebar_label));
+        XSetFont(dpy, draw_gc, font->fid);
+        XDrawString(dpy, pm, draw_gc, x0 + 2, bar_y + bar_h - 1, lbl, 1);
     }
 
     /* --- Bar 3: Segment progress (yellow), no label --- */
@@ -1397,21 +1447,18 @@ static void bottom_bar_draw(void)
         int fill_w = w - x0 - gap;
         if (fill_w < 1) fill_w = 1;
 
-        /* Track */
-        XSetForeground(dpy, gc, px(cfg.col_timebar_track));
-        XFillRectangle(dpy, pm, gc, x0 + gap, bar_y, (unsigned)fill_w, (unsigned)bar_h);
+        XSetForeground(dpy, draw_gc, px(cfg.col_timebar_track));
+        XFillRectangle(dpy, pm, draw_gc, x0 + gap, bar_y, (unsigned)fill_w, (unsigned)bar_h);
 
-        /* Fill */
         int fw = (int)(fill_w * seg_pct);
         if (fw > 0) {
-            XSetForeground(dpy, gc, px(cfg.col_timebar_seg));
-            XFillRectangle(dpy, pm, gc, x0 + gap, bar_y, (unsigned)fw, (unsigned)bar_h);
+            XSetForeground(dpy, draw_gc, px(cfg.col_timebar_seg));
+            XFillRectangle(dpy, pm, draw_gc, x0 + gap, bar_y, (unsigned)fw, (unsigned)bar_h);
         }
     }
 
     /* Blit */
-    XCopyArea(dpy, pm, bottom_bar_win, gc, 0, 0, (unsigned)w, (unsigned)h, 0, 0);
-    XFreeGC(dpy, gc);
+    XCopyArea(dpy, pm, bottom_bar_win, draw_gc, 0, 0, (unsigned)w, (unsigned)h, 0, 0);
     XFreePixmap(dpy, pm);
     XFlush(dpy);
 }
@@ -1484,18 +1531,17 @@ static void draw_tab_bar(Node *tile)
     const char *bar_bg = is_active ? cfg.col_border_active : cfg.col_tab_bar_bg;
 
     Pixmap pm = XCreatePixmap(dpy, win, (unsigned)w, (unsigned)h, (unsigned)depth);
-    GC gc = XCreateGC(dpy, pm, 0, NULL);
 
     /* Background */
-    XSetForeground(dpy, gc, px(bar_bg));
-    XFillRectangle(dpy, pm, gc, 0, 0, (unsigned)w, (unsigned)h);
+    XSetForeground(dpy, draw_gc, px(bar_bg));
+    XFillRectangle(dpy, pm, draw_gc, 0, 0, (unsigned)w, (unsigned)h);
 
     int n = tile->tile.nwindows;
     if (n == 0) {
         if (is_active) {
-            XSetForeground(dpy, gc, px("#FFFFFF"));
-            XSetFont(dpy, gc, font->fid);
-            XDrawString(dpy, pm, gc, 6, h/2 + 4, "...", 3);
+            XSetForeground(dpy, draw_gc, px("#FFFFFF"));
+            XSetFont(dpy, draw_gc, font->fid);
+            XDrawString(dpy, pm, draw_gc, 6, h/2 + 4, "...", 3);
         }
     } else {
         int tab_w = w / n; if (tab_w < 1) tab_w = 1;
@@ -1512,28 +1558,27 @@ static void draw_tab_bar(Node *tile)
             int x0 = i * tab_w;
             int tw = (i < n - 1) ? tab_w : (w - x0);
 
-            XSetForeground(dpy, gc, px(bg));
-            XFillRectangle(dpy, pm, gc, x0, 0, (unsigned)tw, (unsigned)h);
+            XSetForeground(dpy, draw_gc, px(bg));
+            XFillRectangle(dpy, pm, draw_gc, x0, 0, (unsigned)tw, (unsigned)h);
 
             if (i < n - 1) {
-                XSetForeground(dpy, gc, px(bar_bg));
-                XFillRectangle(dpy, pm, gc, x0 + tw - 1, 0, 1, (unsigned)h);
+                XSetForeground(dpy, draw_gc, px(bar_bg));
+                XFillRectangle(dpy, pm, draw_gc, x0 + tw - 1, 0, 1, (unsigned)h);
             }
 
-            char title[MAX_WINS_PER_TILE];
+            char title[128];
             get_wm_name(tile->tile.windows[i], title, sizeof(title));
             int tlen = (int)strlen(title);
             if (tlen > 20) { title[18] = '.'; title[19] = '.'; title[20] = '\0'; tlen = 20; }
 
-            XSetForeground(dpy, gc, px(fg));
-            XSetFont(dpy, gc, font->fid);
-            XDrawString(dpy, pm, gc, x0 + 6, h/2 + 4, title, tlen);
+            XSetForeground(dpy, draw_gc, px(fg));
+            XSetFont(dpy, draw_gc, font->fid);
+            XDrawString(dpy, pm, draw_gc, x0 + 6, h/2 + 4, title, tlen);
         }
     }
 
     /* Blit */
-    XCopyArea(dpy, pm, win, gc, 0, 0, (unsigned)w, (unsigned)h, 0, 0);
-    XFreeGC(dpy, gc);
+    XCopyArea(dpy, pm, win, draw_gc, 0, 0, (unsigned)w, (unsigned)h, 0, 0);
     XFreePixmap(dpy, pm);
     XFlush(dpy);
 }
@@ -1564,15 +1609,13 @@ static void arrange_tile(Node *tile)
 static void arrange_workspace(Workspace *w)
 {
     ws_recalc(w, NULL);
-    Node *tiles[MAX_TILES];
-    int n = collect_tiles(w->root, tiles, MAX_TILES);
+    Node **tiles; int n = ws_get_tiles(w, &tiles);
     for (int i = 0; i < n; i++) arrange_tile(tiles[i]);
 }
 
 static void hide_workspace(Workspace *w)
 {
-    Node *tiles[MAX_TILES];
-    int n = collect_tiles(w->root, tiles, MAX_TILES);
+    Node **tiles; int n = ws_get_tiles(w, &tiles);
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < tiles[i]->tile.nwindows; j++)
             XUnmapWindow(dpy, tiles[i]->tile.windows[j]);
@@ -1592,8 +1635,7 @@ static void focus_tile(Node *tile)
         XRaiseWindow(dpy, w);
     }
     /* Redraw all tiles for active/inactive borders & tabs */
-    Node *tiles[MAX_TILES];
-    int n = collect_tiles(ws()->root, tiles, MAX_TILES);
+    Node **tiles; int n = ws_get_tiles(ws(), &tiles);
     for (int i = 0; i < n; i++) {
         ensure_frame(tiles[i]);
         ensure_tab_bar(tiles[i]);
@@ -1610,8 +1652,7 @@ static Node *find_adjacent(const char *dir)
     Node *best = NULL;
     long best_dist = 0x7FFFFFFF;
 
-    Node *tiles[MAX_TILES];
-    int n = collect_tiles(ws()->root, tiles, MAX_TILES);
+    Node **tiles; int n = ws_get_tiles(ws(), &tiles);
     for (int i = 0; i < n; i++) {
         if (tiles[i] == cur) continue;
         int tx = tiles[i]->x + tiles[i]->w/2, ty = tiles[i]->y + tiles[i]->h/2;
@@ -1635,6 +1676,8 @@ static void spawn(const char *cmd)
 {
     if (fork() == 0) {
         setsid();
+        /* Close the X connection fd so children can't poke the display */
+        if (dpy) close(ConnectionNumber(dpy));
         execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
         _exit(1);
     }
@@ -1746,8 +1789,8 @@ static void unmanage_window(Window wid)
     managed_del(wid);
 
     /* If this was the fullscreen window, restore normal state */
-    if (fullscreen_win == wid) {
-        fullscreen_win = None;
+    if (workspaces[ws_idx].fullscreen_win == wid) {
+        workspaces[ws_idx].fullscreen_win = None;
         if (status_bar_win != None) {
             XMapWindow(dpy, status_bar_win);
             XRaiseWindow(dpy, status_bar_win);
@@ -1773,7 +1816,7 @@ static void unmanage_window(Window wid)
 void action_switch_workspace(int n)
 {
     if (n == cur_ws) return;
-    if (fullscreen_win != None) fullscreen_exit(fullscreen_win);
+    if (ws()->fullscreen_win != None) fullscreen_exit(ws()->fullscreen_win);
     hide_workspace(ws());
     cur_ws = n;
     arrange_workspace(ws());
@@ -1804,7 +1847,7 @@ static void action_send_to_workspace(int n)
     bar_draw();
 }
 
-static void action_spawn_cmd(const char *cmd) { spawn(cmd); }
+
 
 static void action_close_window(void)
 {
@@ -1859,6 +1902,7 @@ static void action_split(int horizontal, int move_window)
     } else {
         ws()->active_tile = tile;
     }
+    ws_invalidate_tiles(ws());
     arrange_workspace(ws());
 }
 
@@ -1903,6 +1947,7 @@ static void action_remove_split(void)
     node_free_tree(sibling);
     free(parent);
 
+    ws_invalidate_tiles(ws());
     arrange_workspace(ws());
 }
 
@@ -1983,20 +2028,6 @@ static void action_move_window_direction(const char *dir)
 static void action_quit(void)
 {
     running = 0;
-    cmd_cleanup();
-    bar_destroy();
-    bottom_bar_destroy();
-    cleanup_ewmh();
-    for (int i = 0; i < NUM_WORKSPACES; i++) {
-        Node *tiles[MAX_TILES];
-        int n = collect_tiles(workspaces[i].root, tiles, MAX_TILES);
-        for (int j = 0; j < n; j++) {
-            destroy_tab_bar(tiles[j]);
-            destroy_frame(tiles[j]);
-        }
-    }
-    XCloseDisplay(dpy);
-    kill(getpid(), SIGTERM);
 }
 
 /* ===== Command socket ===== */
@@ -2014,7 +2045,7 @@ static void cmd_init(void)
 
     unlink(path);   /* remove stale socket from previous run */
 
-    cmd_listen_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
+    cmd_listen_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
     if (cmd_listen_fd < 0) {
         fprintf(stderr, "swm: cmd socket: %s\n", strerror(errno));
         return;
@@ -2097,7 +2128,8 @@ static void cmd_dispatch(int client_fd, char *line)
     /* ---- help ---- */
     if (strcmp(line, "help") == 0) {
         cmd_reply(client_fd, "exec <cmd> | split h|v | split-move h|v | unsplit");
-        cmd_reply(client_fd, "close | quit | reload | fullscreen | set <key> <value>");
+        cmd_reply(client_fd, "close | quit | reload | fullscreen");
+        cmd_reply(client_fd, "set <key> <value> | get <key>");
         cmd_reply(client_fd, "next-tab | prev-tab | move-tab-fwd | move-tab-bwd");
         cmd_reply(client_fd, "next-ws | prev-ws | workspace <1-9> | send <1-9>");
         cmd_reply(client_fd, "focus <dir> | move <dir>  (dir: left|right|up|down)");
@@ -2133,9 +2165,9 @@ static void cmd_dispatch(int client_fd, char *line)
             *sp = '\0';
             char *val = sp + 1;
             while (*val == ' ') val++;
+            strip_quotes(val);
             if (cfg_set_kv(kv, val)) {
-                n_colors = 0;   /* flush colour cache */
-                cfg_apply();
+                apply_pending = 1;
                 cmd_reply(client_fd, "ok");
             } else {
                 cmd_reply(client_fd, "err: unknown key");
@@ -2143,6 +2175,41 @@ static void cmd_dispatch(int client_fd, char *line)
         } else {
             cmd_reply(client_fd, "err: set <key> <value>");
         }
+        return;
+    }
+
+    /* ---- get <key> — query config value ---- */
+    if (strncmp(line, "get ", 4) == 0) {
+        const char *key = line + 4;
+        while (*key == ' ') key++;
+        char r[256];
+
+        /* Integers */
+        if (strcmp(key, "tab_bar_height") == 0)      { snprintf(r, sizeof(r), "%d", cfg.tab_bar_height);      cmd_reply(client_fd, r); return; }
+        if (strcmp(key, "border_width") == 0)         { snprintf(r, sizeof(r), "%d", cfg.border_width);        cmd_reply(client_fd, r); return; }
+        if (strcmp(key, "border_gap") == 0)           { snprintf(r, sizeof(r), "%d", cfg.border_gap);          cmd_reply(client_fd, r); return; }
+        if (strcmp(key, "statusbar_height") == 0)     { snprintf(r, sizeof(r), "%d", cfg.statusbar_height);    cmd_reply(client_fd, r); return; }
+        if (strcmp(key, "statusbar_pos") == 0)        { snprintf(r, sizeof(r), "%d", cfg.statusbar_pos);       cmd_reply(client_fd, r); return; }
+        if (strcmp(key, "timebar_pos") == 0)          { snprintf(r, sizeof(r), "%d", cfg.timebar_pos);         cmd_reply(client_fd, r); return; }
+        if (strcmp(key, "timebar_height") == 0)       { snprintf(r, sizeof(r), "%d", cfg.timebar_height);      cmd_reply(client_fd, r); return; }
+        if (strcmp(key, "bar_update_interval") == 0)  { snprintf(r, sizeof(r), "%.2f", cfg.bar_update_interval); cmd_reply(client_fd, r); return; }
+
+        /* Commands */
+        if (strcmp(key, "terminal") == 0)     { cmd_reply(client_fd, cfg.terminal_cmd); return; }
+        if (strcmp(key, "file_manager") == 0) { cmd_reply(client_fd, cfg.fm_cmd);       return; }
+        if (strcmp(key, "browser") == 0)      { cmd_reply(client_fd, cfg.www_cmd);      return; }
+        if (strcmp(key, "launcher") == 0)     { cmd_reply(client_fd, cfg.launcher_cmd); return; }
+        if (strcmp(key, "reload") == 0)       { cmd_reply(client_fd, cfg.reload_cmd);   return; }
+
+        /* Colors */
+        for (int i = 0; col_map[i].name; i++) {
+            if (strcmp(key, col_map[i].name) == 0) {
+                cmd_reply(client_fd, (const char *)&cfg + col_map[i].off);
+                return;
+            }
+        }
+
+        cmd_reply(client_fd, "err: unknown key");
         return;
     }
 
@@ -2235,8 +2302,7 @@ static void cmd_dispatch(int client_fd, char *line)
         return;
     }
     if (strcmp(line, "query layout") == 0) {
-        Node *tiles[MAX_TILES];
-        int n = collect_tiles(ws()->root, tiles, MAX_TILES);
+        Node **tiles; int n = ws_get_tiles(ws(), &tiles);
         char r[16]; snprintf(r, sizeof(r), "%d", n);
         cmd_reply(client_fd, r);
         return;
@@ -2255,6 +2321,7 @@ static void cmd_poll(fd_set *fds)
         int cfd = accept(cmd_listen_fd, NULL, NULL);
         if (cfd >= 0) {
             fcntl(cfd, F_SETFL, O_NONBLOCK);
+            fcntl(cfd, F_SETFD, FD_CLOEXEC);
             if (n_cmd_clients < CMD_MAX_CLIENTS) {
                 cmd_clients[n_cmd_clients].fd  = cfd;
                 cmd_clients[n_cmd_clients].len = 0;
@@ -2418,8 +2485,7 @@ static void on_expose(XEvent *ev)
     if (status_bar_win != None && wid == status_bar_win) { bar_draw(); return; }
     if (bottom_bar_win != None && wid == bottom_bar_win) { bottom_bar_draw(); return; }
     if (set_contains(tab_bars, n_tab_bars, wid)) {
-        Node *tiles[MAX_TILES];
-        int n = collect_tiles(ws()->root, tiles, MAX_TILES);
+        Node **tiles; int n = ws_get_tiles(ws(), &tiles);
         for (int i = 0; i < n; i++)
             if (tiles[i]->tile.tab_bar_win == wid) { draw_tab_bar(tiles[i]); break; }
     }
@@ -2440,8 +2506,7 @@ static void on_button_press(XEvent *ev)
 
     /* Tab bar */
     if (set_contains(tab_bars, n_tab_bars, wid)) {
-        Node *tiles[MAX_TILES];
-        int n = collect_tiles(ws()->root, tiles, MAX_TILES);
+        Node **tiles; int n = ws_get_tiles(ws(), &tiles);
         for (int i = 0; i < n; i++) {
             if (tiles[i]->tile.tab_bar_win == wid) {
                 Node *tile = tiles[i];
@@ -2532,7 +2597,7 @@ static void on_key_press(XEvent *ev)
 
         switch (cfg.binds[i].action) {
             case ACT_SPAWN: {
-                const char *cmd = cfg.binds[i].sarg[0] ? cfg.binds[i].sarg : NULL;
+                const char *cmd = (cfg.binds[i].sarg && cfg.binds[i].sarg[0]) ? cfg.binds[i].sarg : NULL;
                 if (!cmd) {  /* slot index in iarg */
                     switch (cfg.binds[i].iarg) {
                         case 0: cmd = cfg.terminal_cmd; break;
@@ -2542,7 +2607,7 @@ static void on_key_press(XEvent *ev)
                         case 4: cmd = cfg.reload_cmd;  break;
                     }
                 }
-                if (cmd) action_spawn_cmd(cmd);
+                if (cmd) spawn(cmd);
                 break;
             }
             case ACT_SPLIT:             action_split(cfg.binds[i].iarg & 1, cfg.binds[i].iarg & 2); break;
@@ -2557,8 +2622,8 @@ static void on_key_press(XEvent *ev)
             case ACT_PREV_WORKSPACE:    action_prev_workspace(); break;
             case ACT_SWITCH_WORKSPACE:  action_switch_workspace(cfg.binds[i].iarg); break;
             case ACT_SEND_TO_WORKSPACE: action_send_to_workspace(cfg.binds[i].iarg); break;
-            case ACT_FOCUS_DIR:         action_focus_direction(cfg.binds[i].sarg); break;
-            case ACT_MOVE_WIN_DIR:      action_move_window_direction(cfg.binds[i].sarg); break;
+            case ACT_FOCUS_DIR:         if (cfg.binds[i].sarg) action_focus_direction(cfg.binds[i].sarg); break;
+            case ACT_MOVE_WIN_DIR:      if (cfg.binds[i].sarg) action_move_window_direction(cfg.binds[i].sarg); break;
         }
         return;
     }
@@ -2592,8 +2657,7 @@ static void grab_keys(void)
 
 int main(int argc, char **argv)
 {
-    (void)argc;
-    saved_argv = argv;
+    (void)argc; (void)argv;
     signal(SIGCHLD, SIG_IGN);
     signal(SIGHUP,  on_sighup);
 
@@ -2637,20 +2701,18 @@ int main(int argc, char **argv)
     a_utf8           = XInternAtom(dpy, "UTF8_STRING", False);
     a_wm_protocols   = XInternAtom(dpy, "WM_PROTOCOLS", False);
     a_wm_delete      = XInternAtom(dpy, "WM_DELETE_WINDOW", False);
-    a_strut          = XInternAtom(dpy, "_NET_WM_STRUT", False);
-    a_strut_partial  = XInternAtom(dpy, "_NET_WM_STRUT_PARTIAL", False);
     a_wm_type        = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
     a_wm_type_dock   = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DOCK", False);
     a_net_wm_state   = XInternAtom(dpy, "_NET_WM_STATE", False);
     a_net_wm_state_fullscreen = XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False);
     a_wm_type_splash      = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_SPLASH", False);
     a_wm_type_dialog      = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
-    a_wm_type_utility     = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_UTILITY", False);
-    a_wm_type_toolbar     = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_TOOLBAR", False);
     a_wm_type_tooltip     = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_TOOLTIP", False);
     a_wm_type_notification= XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_NOTIFICATION", False);
     a_wm_type_popup_menu  = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_POPUP_MENU", False);
-    a_wm_transient_for    = XInternAtom(dpy, "WM_TRANSIENT_FOR", False);
+
+    /* Persistent GC for all drawing */
+    draw_gc = XCreateGC(dpy, root_win, 0, NULL);
 
     /* Workspaces */
     for (int i = 0; i < NUM_WORKSPACES; i++) {
@@ -2659,11 +2721,12 @@ int main(int argc, char **argv)
         workspaces[i].tile_h = tile_h_val;
         workspaces[i].root = node_new_tile(0, tile_y_off, sw, tile_h_val);
         workspaces[i].active_tile = workspaces[i].root;
+        workspaces[i].fullscreen_win = None;
+        workspaces[i].tiles_dirty = 1;
     }
     cur_ws = 0;
     status_bar_win = None;
     bottom_bar_win = None;
-    fullscreen_win = None;
     running = 1;
 
     /* Desktop background */
@@ -2762,6 +2825,12 @@ int main(int argc, char **argv)
         /* Handle command socket I/O */
         cmd_poll(&fds);
 
+        /* Coalesced config apply — batched "set" commands trigger one apply */
+        if (apply_pending) {
+            apply_pending = 0;
+            cfg_apply();
+        }
+
         /* SIGHUP / socket "reload" — re-read config */
         if (reload_pending) {
             reload_pending = 0;
@@ -2781,13 +2850,13 @@ int main(int argc, char **argv)
     bottom_bar_destroy();
     cleanup_ewmh();
     for (int i = 0; i < NUM_WORKSPACES; i++) {
-        Node *tiles[MAX_TILES];
-        int n = collect_tiles(workspaces[i].root, tiles, MAX_TILES);
+        Node **tiles; int n = ws_get_tiles(&workspaces[i], &tiles);
         for (int j = 0; j < n; j++) {
             destroy_tab_bar(tiles[j]);
             destroy_frame(tiles[j]);
         }
     }
+    XFreeGC(dpy, draw_gc);
     XCloseDisplay(dpy);
     return 0;
 }
