@@ -160,7 +160,7 @@ col_border_active   = #696969
 col_border_inactive = #1E1E1E
 col_desktop_bg      = #000000
 
-# ===== Colours — bottom hex-time bar =====
+# ===== Colours — hex-time bar =====
 
 col_timebar_bg     = #1E1E1E
 col_timebar_hour   = #CC3300
