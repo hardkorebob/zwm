@@ -29,15 +29,13 @@ Requires `libX11-dev` library & `-misc-fixed-medium-r-*-*-13-*-*-*-*-*-iso8859-1
 
 ## IPC & swmctl
 
-The real gold of this project is the scripting. You can make a script where the colors change at a certain interval giving the whole desktop a breathing-like, life-like quality. Think about it. It can also make orchestrating custom layouts a breeze. You could even make a small automated "demo" of all the applications of the computer using this socket scripting capability. What do you think? Outline your findings
+The real gold of this project is the scripting. You can make a script where the colors change at a certain interval giving the whole desktop a breathing-like, life-like quality. It can also make orchestrating custom layouts a breeze.
 
-**What's controllable at runtime via set:**
+**Controllable at runtime via swmctl**
 
 Every color in the entire UI, all geometry (tab bar height, border width, border gap, statusbar/timebar height and position), the update interval, all five program slots (terminal, browser, file manager, launcher, reload command), keybindings and set calls cfg_apply() immediately so it flushes the color cache, recalculates bar geometry, tears down and rebuilds the bars, repaints the root window background, re-arranges tiles, and re-grabs keys. So every change is live and instantaneous.
 
-**What's controllable via action commands:**
-
-exec, split h/v, split-move h/v, unsplit, close, quit, reload, fullscreen, tab navigation (next/prev/move forward/backward), workspace switching (next/prev/by number), send to workspace, focus/move in four directions.
+Commands: exec, split h/v, split-move h/v, unsplit, close, quit, reload, fullscreen, tab navigation (next/prev/move forward/backward), workspace switching (next/prev/by number), send to workspace, focus/move in four directions.
 
 Query interface: current workspace number, window count in active tile, active window title, and tile count (layout). That's enough for a script to be state-aware.
 
