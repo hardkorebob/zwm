@@ -2346,7 +2346,11 @@ unmanage_window (Window wid)
           tile_clamp_tab (tile);
         }
       if (ws_idx == cur_ws)
+        {
         arrange_tile (tile);
+        if (tile->tile.nwindows > 0)
+          focus_set_input (tile);
+        }
     }
   bar_draw ();
 }
