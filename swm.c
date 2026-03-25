@@ -3273,6 +3273,7 @@ on_unmap_notify (XEvent *ev)
         {
           int idx = tile_index (tile, wid);
           if (idx == tile->tile.active_tab)
+            {
               unmanage_window (wid);
             }
         }
