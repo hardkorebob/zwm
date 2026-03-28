@@ -28,6 +28,7 @@
 #define MAX_SET 512
 #define MAX_COLORS 256
 #define MAX_BINDINGS 64
+#define CLEAN_MASK(m) ((m) & ~(Mod2Mask | LockMask))
 
 typedef enum
 {
@@ -69,12 +70,6 @@ typedef struct
   int timebar_height;
   double bar_update_interval;
 
-  char terminal_cmd[128];
-  char fm_cmd[128];
-  char www_cmd[128];
-  char launcher_cmd[128];
-  char reload_cmd[128];
-
   char col_statusbar_bg[8];
   char col_statusbar_fg[8];
   char col_statusbar_ws_active[8];
@@ -106,7 +101,215 @@ typedef struct
   int n_binds;
 } Config;
 
+typedef enum
+{
+  CFG_INT,
+  CFG_DOUBLE
+} CfgNumKind;
+
+typedef enum
+{
+  NODE_TILE,
+  NODE_SPLIT
+} NodeType;
+
+typedef struct Node
+{
+  NodeType type;
+  int x, y, w, h;
+  struct Node *parent;
+  union
+  {
+    struct
+    {
+      Window *windows;
+      int nwindows;
+      int win_cap;
+      int active_tab;
+      int prev_active_tab;
+      Window tab_bar_win;
+      Window frame_win;
+    } tile;
+    struct
+    {
+      int horizontal;
+      double ratio;
+      struct Node *children[2];
+    } split;
+  };
+} Node;
+
+typedef struct
+{
+  int sw, sh, tile_y, tile_h;
+  Node *root;
+  Node *active_tile;
+  Window fullscreen_win;
+
+  Node *cached_tiles[MAX_TILES];
+  int n_cached_tiles;
+  int tiles_dirty;
+} Workspace;
+
+typedef struct
+{
+  Window wid;
+  int ws;
+} ManagedEntry;
+
+typedef struct
+{
+  char hex[8];
+  unsigned long px;
+} ColorEntry;
+
+static const struct
+{
+  const char *name;
+  size_t off;
+} col_map[] = {
+  { "col_statusbar_bg", offsetof (Config, col_statusbar_bg) },
+  { "col_statusbar_fg", offsetof (Config, col_statusbar_fg) },
+  { "col_statusbar_ws_active", offsetof (Config, col_statusbar_ws_active) },
+  { "col_statusbar_ws_inactive",
+    offsetof (Config, col_statusbar_ws_inactive) },
+  { "col_statusbar_ws_occupied",
+    offsetof (Config, col_statusbar_ws_occupied) },
+  { "col_statusbar_ws_fg_act", offsetof (Config, col_statusbar_ws_fg_act) },
+  { "col_statusbar_ws_fg_inact",
+    offsetof (Config, col_statusbar_ws_fg_inact) },
+  { "col_tab_active_bg", offsetof (Config, col_tab_active_bg) },
+  { "col_tab_inactive_bg", offsetof (Config, col_tab_inactive_bg) },
+  { "col_tab_active_fg", offsetof (Config, col_tab_active_fg) },
+  { "col_tab_inactive_fg", offsetof (Config, col_tab_inactive_fg) },
+  { "col_tab_bar_bg", offsetof (Config, col_tab_bar_bg) },
+  { "col_tab_active_bg_dim", offsetof (Config, col_tab_active_bg_dim) },
+  { "col_tab_active_fg_dim", offsetof (Config, col_tab_active_fg_dim) },
+  { "col_border_active", offsetof (Config, col_border_active) },
+  { "col_border_inactive", offsetof (Config, col_border_inactive) },
+  { "col_desktop_bg", offsetof (Config, col_desktop_bg) },
+  { "col_timebar_bg", offsetof (Config, col_timebar_bg) },
+  { "col_timebar_hour", offsetof (Config, col_timebar_hour) },
+  { "col_timebar_hex", offsetof (Config, col_timebar_hex) },
+  { "col_timebar_seg", offsetof (Config, col_timebar_seg) },
+  { "col_timebar_label", offsetof (Config, col_timebar_label) },
+  { "col_timebar_track", offsetof (Config, col_timebar_track) },
+  { NULL, 0 }
+};
+
+static const struct
+{
+  const char *name;
+  size_t off;
+  CfgNumKind kind;
+} num_map[]
+    = { { "tab_bar_height", offsetof (Config, tab_bar_height), CFG_INT },
+        { "border_width", offsetof (Config, border_width), CFG_INT },
+        { "border_gap", offsetof (Config, border_gap), CFG_INT },
+        { "statusbar_height", offsetof (Config, statusbar_height), CFG_INT },
+        { "statusbar_pos", offsetof (Config, statusbar_pos), CFG_INT },
+        { "timebar_pos", offsetof (Config, timebar_pos), CFG_INT },
+        { "timebar_height", offsetof (Config, timebar_height), CFG_INT },
+        { "bar_update_interval", offsetof (Config, bar_update_interval),
+          CFG_DOUBLE },
+        { NULL, 0, 0 } };
+
+static const struct
+{
+  const char *name;
+  Action act;
+} action_map[] = { { "spawn", ACT_SPAWN },
+                   { "split_h", ACT_SPLIT },
+                   { "split_v", ACT_SPLIT },
+                   { "split_h_move", ACT_SPLIT },
+                   { "split_v_move", ACT_SPLIT },
+                   { "remove_split", ACT_REMOVE_SPLIT },
+                   { "close", ACT_CLOSE_WINDOW },
+                   { "quit", ACT_QUIT },
+                   { "next_tab", ACT_NEXT_TAB },
+                   { "prev_tab", ACT_PREV_TAB },
+                   { "move_tab_fwd", ACT_MOVE_TAB_FWD },
+                   { "move_tab_bwd", ACT_MOVE_TAB_BWD },
+                   { "next_ws", ACT_NEXT_WORKSPACE },
+                   { "prev_ws", ACT_PREV_WORKSPACE },
+                   { "switch_ws", ACT_SWITCH_WORKSPACE },
+                   { "send_to_ws", ACT_SEND_TO_WORKSPACE },
+                   { "focus", ACT_FOCUS_DIR },
+                   { "move_win", ACT_MOVE_WIN_DIR },
+                   { NULL, 0 } };
+
+static struct
+{
+  int fd;
+  char buf[CMD_BUF_SIZE];
+  int len;
+} cmd_clients[CMD_MAX_CLIENTS];
+
+static Display *dpy;
+static int scr_num;
+static Screen *scr;
+static Window root_win;
+static int sw, sh;
+static int tile_y_off, tile_h_val;
+static Colormap cmap;
+static XFontStruct *font;
+static int depth;
+static Workspace workspaces[NUM_WORKSPACES];
+static int cur_ws;
+static ManagedEntry managed[MAX_MANAGED];
+static int n_managed;
+static Window tab_bars[MAX_SET];
+static int n_tab_bars;
+static Window frame_wins[MAX_SET];
+static int n_frame_wins;
+static Window status_bar_win;
+static Window timebar_win;
+static Window float_wins[MAX_SET];
+static int n_float_wins;
+static double last_bar_update;
+static int running;
+static ColorEntry color_cache[MAX_COLORS];
+static int n_colors;
+static Atom a_net_wm_name, a_utf8, a_wm_protocols, a_wm_delete;
+static Atom a_wm_type, a_wm_type_dock;
+static Atom a_net_wm_state, a_net_wm_state_fullscreen;
+static Atom a_wm_type_splash, a_wm_type_dialog;
+static Atom a_wm_type_tooltip, a_wm_type_notification;
+static Atom a_wm_type_popup_menu;
+static Window ewmh_check_win;
+static GC draw_gc;
+static int cmd_listen_fd = -1;
+static char cmd_sock_path[256];
+static void ensure_frame (Node *tile);
+static void destroy_frame (Node *tile);
+static void ensure_tab_bar (Node *tile);
+static void destroy_tab_bar (Node *tile);
+static void draw_tab_bar (Node *tile);
+static void arrange_tile (Node *tile);
+static void arrange_workspace (Workspace *w);
+static void raise_floats (void);
+static void hide_workspace (Workspace *w);
+static void focus_tile (Node *tile);
+static void focus_set_input (Node *tile);
+static void send_configure_notify (Window wid);
+static void bar_draw (void);
+static void bar_destroy (void);
+static void timebar_init (void);
+static void timebar_draw (void);
+static void timebar_destroy (void);
+static void unmanage_window (Window wid);
+static void cmd_init (void);
+static void cmd_cleanup (void);
+static void cmd_poll (fd_set *fds);
+static void action_switch_workspace (int n);
+static int valid_hex_color (const char *hex);
+static volatile sig_atomic_t reload_pending;
+static volatile sig_atomic_t apply_pending;
+static void cfg_apply (void);
+static void grab_keys (void);
 static Config cfg;
+static int n_cmd_clients;
+static int wm_detected;
 
 static void
 sarg_set (char **dst, const char *src)
@@ -126,12 +329,6 @@ cfg_defaults (void)
   cfg.timebar_pos = 1;
   cfg.timebar_height = 14;
   cfg.bar_update_interval = 1.0;
-
-  snprintf (cfg.terminal_cmd, sizeof (cfg.terminal_cmd), "%s", "xterm");
-  snprintf (cfg.fm_cmd, sizeof (cfg.fm_cmd), "%s", "thunar");
-  snprintf (cfg.www_cmd, sizeof (cfg.www_cmd), "%s", "firefox");
-  snprintf (cfg.launcher_cmd, sizeof (cfg.launcher_cmd), "%s", "dmenu_run");
-  snprintf (cfg.reload_cmd, sizeof (cfg.reload_cmd), "%s", "swmctl reload");
 
 #define SETCOL(dst, lit)                                                      \
   do                                                                          \
@@ -194,27 +391,18 @@ cfg_default_binds (void)
   B (XK_F3, 0, ACT_PREV_WORKSPACE, 0, NULL);
   B (XK_F4, 0, ACT_NEXT_WORKSPACE, 0, NULL);
   B (XK_F6, 0, ACT_CLOSE_WINDOW, 0, NULL);
-  B (XK_F7, 0, ACT_SPAWN, 3, NULL);
-  B (XK_F8, 0, ACT_SPAWN, 1, NULL);
-  B (XK_F9, 0, ACT_SPAWN, 2, NULL);
-
-  B (XK_Return, Mod4Mask, ACT_SPAWN, 0, NULL);
   B (XK_h, Mod4Mask, ACT_SPLIT, 1, NULL);
   B (XK_v, Mod4Mask, ACT_SPLIT, 0, NULL);
   B (XK_d, Mod4Mask, ACT_REMOVE_SPLIT, 0, NULL);
   B (XK_q, Mod4Mask, ACT_QUIT, 0, NULL);
   B (XK_comma, Mod4Mask, ACT_MOVE_TAB_BWD, 0, NULL);
   B (XK_period, Mod4Mask, ACT_MOVE_TAB_FWD, 0, NULL);
-  B (XK_r, Mod4Mask, ACT_SPAWN, 4, NULL);
-
   B (XK_Left, Mod4Mask, ACT_FOCUS_DIR, 0, "left");
   B (XK_Right, Mod4Mask, ACT_FOCUS_DIR, 0, "right");
   B (XK_Up, Mod4Mask, ACT_FOCUS_DIR, 0, "up");
   B (XK_Down, Mod4Mask, ACT_FOCUS_DIR, 0, "down");
-
   B (XK_h, Mod4Mask | ShiftMask, ACT_SPLIT, 3, NULL);
   B (XK_v, Mod4Mask | ShiftMask, ACT_SPLIT, 2, NULL);
-
   B (XK_Left, Mod4Mask | ShiftMask, ACT_MOVE_WIN_DIR, 0, "left");
   B (XK_Right, Mod4Mask | ShiftMask, ACT_MOVE_WIN_DIR, 0, "right");
   B (XK_Up, Mod4Mask | ShiftMask, ACT_MOVE_WIN_DIR, 0, "up");
@@ -235,7 +423,7 @@ strip_quotes (char *s)
   size_t len = strlen (s);
   if (len >= 2
       && ((s[0] == '"' && s[len - 1] == '"')
-          || (s[0] == '\'' && s[len - 1] == '\'')))
+      || (s[0] == '\'' && s[len - 1] == '\'')))
     {
       memmove (s, s + 1, len - 2);
       s[len - 2] = '\0';
@@ -261,30 +449,6 @@ parse_mod_token (const char *s)
     return Mod5Mask;
   return 0;
 }
-
-static const struct
-{
-  const char *name;
-  Action act;
-} action_map[] = { { "spawn", ACT_SPAWN },
-                   { "split_h", ACT_SPLIT },
-                   { "split_v", ACT_SPLIT },
-                   { "split_h_move", ACT_SPLIT },
-                   { "split_v_move", ACT_SPLIT },
-                   { "remove_split", ACT_REMOVE_SPLIT },
-                   { "close", ACT_CLOSE_WINDOW },
-                   { "quit", ACT_QUIT },
-                   { "next_tab", ACT_NEXT_TAB },
-                   { "prev_tab", ACT_PREV_TAB },
-                   { "move_tab_fwd", ACT_MOVE_TAB_FWD },
-                   { "move_tab_bwd", ACT_MOVE_TAB_BWD },
-                   { "next_ws", ACT_NEXT_WORKSPACE },
-                   { "prev_ws", ACT_PREV_WORKSPACE },
-                   { "switch_ws", ACT_SWITCH_WORKSPACE },
-                   { "send_to_ws", ACT_SEND_TO_WORKSPACE },
-                   { "focus", ACT_FOCUS_DIR },
-                   { "move_win", ACT_MOVE_WIN_DIR },
-                   { NULL, 0 } };
 
 static int
 split_iarg (const char *name)
@@ -492,82 +656,6 @@ cfg_resolve_path (char *out, int len)
   return 0;
 }
 
-static const struct
-{
-  const char *name;
-  size_t off;
-} col_map[] = {
-  { "col_statusbar_bg", offsetof (Config, col_statusbar_bg) },
-  { "col_statusbar_fg", offsetof (Config, col_statusbar_fg) },
-  { "col_statusbar_ws_active", offsetof (Config, col_statusbar_ws_active) },
-  { "col_statusbar_ws_inactive",
-    offsetof (Config, col_statusbar_ws_inactive) },
-  { "col_statusbar_ws_occupied",
-    offsetof (Config, col_statusbar_ws_occupied) },
-  { "col_statusbar_ws_fg_act", offsetof (Config, col_statusbar_ws_fg_act) },
-  { "col_statusbar_ws_fg_inact",
-    offsetof (Config, col_statusbar_ws_fg_inact) },
-  { "col_tab_active_bg", offsetof (Config, col_tab_active_bg) },
-  { "col_tab_inactive_bg", offsetof (Config, col_tab_inactive_bg) },
-  { "col_tab_active_fg", offsetof (Config, col_tab_active_fg) },
-  { "col_tab_inactive_fg", offsetof (Config, col_tab_inactive_fg) },
-  { "col_tab_bar_bg", offsetof (Config, col_tab_bar_bg) },
-  { "col_tab_active_bg_dim", offsetof (Config, col_tab_active_bg_dim) },
-  { "col_tab_active_fg_dim", offsetof (Config, col_tab_active_fg_dim) },
-  { "col_border_active", offsetof (Config, col_border_active) },
-  { "col_border_inactive", offsetof (Config, col_border_inactive) },
-  { "col_desktop_bg", offsetof (Config, col_desktop_bg) },
-  { "col_timebar_bg", offsetof (Config, col_timebar_bg) },
-  { "col_timebar_hour", offsetof (Config, col_timebar_hour) },
-  { "col_timebar_hex", offsetof (Config, col_timebar_hex) },
-  { "col_timebar_seg", offsetof (Config, col_timebar_seg) },
-  { "col_timebar_label", offsetof (Config, col_timebar_label) },
-  { "col_timebar_track", offsetof (Config, col_timebar_track) },
-  { NULL, 0 }
-};
-
-typedef enum
-{
-  CFG_INT,
-  CFG_DOUBLE
-} CfgNumKind;
-
-static const struct
-{
-  const char *name;
-  size_t off;
-  CfgNumKind kind;
-} num_map[]
-    = { { "tab_bar_height", offsetof (Config, tab_bar_height), CFG_INT },
-        { "border_width", offsetof (Config, border_width), CFG_INT },
-        { "border_gap", offsetof (Config, border_gap), CFG_INT },
-        { "statusbar_height", offsetof (Config, statusbar_height), CFG_INT },
-        { "statusbar_pos", offsetof (Config, statusbar_pos), CFG_INT },
-        { "timebar_pos", offsetof (Config, timebar_pos), CFG_INT },
-        { "timebar_height", offsetof (Config, timebar_height), CFG_INT },
-        { "bar_update_interval", offsetof (Config, bar_update_interval),
-          CFG_DOUBLE },
-        { NULL, 0, 0 } };
-
-static const struct
-{
-  const char *name;
-  size_t off;
-  size_t size;
-} str_map[] = { { "terminal", offsetof (Config, terminal_cmd),
-                  sizeof (((Config *)0)->terminal_cmd) },
-                { "file_manager", offsetof (Config, fm_cmd),
-                  sizeof (((Config *)0)->fm_cmd) },
-                { "browser", offsetof (Config, www_cmd),
-                  sizeof (((Config *)0)->www_cmd) },
-                { "launcher", offsetof (Config, launcher_cmd),
-                  sizeof (((Config *)0)->launcher_cmd) },
-                { "reload", offsetof (Config, reload_cmd),
-                  sizeof (((Config *)0)->reload_cmd) },
-                { NULL, 0, 0 } };
-
-static int valid_hex_color (const char *hex);
-
 static int
 cfg_set_kv (const char *key, const char *val)
 {
@@ -580,15 +668,6 @@ cfg_set_kv (const char *key, const char *val)
             *(double *)((char *)&cfg + num_map[i].off) = atof (val);
           else
             *(int *)((char *)&cfg + num_map[i].off) = atoi (val);
-          return 1;
-        }
-    }
-
-  for (int i = 0; str_map[i].name; i++)
-    {
-      if (strcmp (key, str_map[i].name) == 0)
-        {
-          snprintf ((char *)&cfg + str_map[i].off, str_map[i].size, "%s", val);
           return 1;
         }
     }
@@ -667,10 +746,6 @@ cfg_load (const char *path)
   return count;
 }
 
-static volatile sig_atomic_t reload_pending;
-
-static volatile sig_atomic_t apply_pending;
-
 static void
 on_sighup (int sig)
 {
@@ -678,116 +753,10 @@ on_sighup (int sig)
   reload_pending = 1;
 }
 
-static void cfg_apply (void);
-static void grab_keys (void);
-
-typedef enum
-{
-  NODE_TILE,
-  NODE_SPLIT
-} NodeType;
-
-typedef struct Node
-{
-  NodeType type;
-  int x, y, w, h;
-  struct Node *parent;
-  union
-  {
-    struct
-    {
-      Window *windows;
-      int nwindows;
-      int win_cap;
-      int active_tab;
-      int prev_active_tab;
-      Window tab_bar_win;
-      Window frame_win;
-    } tile;
-    struct
-    {
-      int horizontal;
-      double ratio;
-      struct Node *children[2];
-    } split;
-  };
-} Node;
-
-typedef struct
-{
-  int sw, sh, tile_y, tile_h;
-  Node *root;
-  Node *active_tile;
-  Window fullscreen_win;
-
-  Node *cached_tiles[MAX_TILES];
-  int n_cached_tiles;
-  int tiles_dirty;
-} Workspace;
-
-typedef struct
-{
-  Window wid;
-  int ws;
-} ManagedEntry;
-
-typedef struct
-{
-  char hex[8];
-  unsigned long px;
-} ColorEntry;
-
-static Display *dpy;
-static int scr_num;
-static Screen *scr;
-static Window root_win;
-static int sw, sh;
-static int tile_y_off, tile_h_val;
-static Colormap cmap;
-static XFontStruct *font;
-static int depth;
-static Workspace workspaces[NUM_WORKSPACES];
-static int cur_ws;
-static ManagedEntry managed[MAX_MANAGED];
-static int n_managed;
-static Window tab_bars[MAX_SET];
-static int n_tab_bars;
-static Window frame_wins[MAX_SET];
-static int n_frame_wins;
-static Window status_bar_win;
-static Window timebar_win;
-static Window float_wins[MAX_SET];
-static int n_float_wins;
-static double last_bar_update;
-static int running;
-static ColorEntry color_cache[MAX_COLORS];
-static int n_colors;
-static Atom a_net_wm_name, a_utf8, a_wm_protocols, a_wm_delete;
-static Atom a_wm_type, a_wm_type_dock;
-static Atom a_net_wm_state, a_net_wm_state_fullscreen;
-static Atom a_wm_type_splash, a_wm_type_dialog;
-static Atom a_wm_type_tooltip, a_wm_type_notification;
-static Atom a_wm_type_popup_menu;
-#define CLEAN_MASK(m) ((m) & ~(Mod2Mask | LockMask))
-static Window ewmh_check_win;
-static GC draw_gc;
-static int cmd_listen_fd = -1;
-static char cmd_sock_path[256];
-
-static struct
-{
-  int fd;
-  char buf[CMD_BUF_SIZE];
-  int len;
-} cmd_clients[CMD_MAX_CLIENTS];
-
-static int n_cmd_clients;
-
 static int
 is_hex_digit (char c)
 {
-  return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
-         || (c >= 'A' && c <= 'F');
+  return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 }
 
 static int
@@ -1175,7 +1144,6 @@ xerr_handler (Display *d, XErrorEvent *e)
   return 0;
 }
 
-static int wm_detected;
 static int
 xerr_detect (Display *d, XErrorEvent *e)
 {
@@ -1764,8 +1732,8 @@ draw_tab_bar (Node *tile)
       if (is_active)
         {
           XSetForeground (dpy, draw_gc, px ("#FFFFFF"));
-          XSetFont (dpy, draw_gc, font->fid);
-          XDrawString (dpy, pm, draw_gc, 6, h / 2 + 4, "...", 3);
+          //XSetFont (dpy, draw_gc, font->fid);
+          //XDrawString (dpy, pm, draw_gc, 6, h / 2 + 4, "...", 3);
         }
     }
   else
@@ -1802,20 +1770,20 @@ draw_tab_bar (Node *tile)
                               (unsigned)h);
             }
 
-          char title[128];
-          get_wm_name (tile->tile.windows[i], title, sizeof (title));
-          int tlen = (int)strlen (title);
-          if (tlen > 20)
-            {
-              title[18] = '.';
-              title[19] = '.';
-              title[20] = '\0';
-              tlen = 20;
-            }
-
+//          char title[128];
+//          get_wm_name (tile->tile.windows[i], title, sizeof (title));
+//          int tlen = (int)strlen (title);
+//          if (tlen > 20)
+//            {
+//              title[18] = '.';
+//              title[19] = '.';
+//              title[20] = '\0';
+//              tlen = 20;
+//            }
+//
           XSetForeground (dpy, draw_gc, px (fg));
-          XSetFont (dpy, draw_gc, font->fid);
-          XDrawString (dpy, pm, draw_gc, x0 + 6, h / 2 + 4, title, tlen);
+//          XSetFont (dpy, draw_gc, font->fid);
+//          XDrawString (dpy, pm, draw_gc, x0 + 6, h / 2 + 4, title, tlen);
         }
     }
 
@@ -2682,15 +2650,6 @@ cmd_dispatch (int client_fd, char *line)
             }
         }
 
-      for (int i = 0; str_map[i].name; i++)
-        {
-          if (strcmp (key, str_map[i].name) == 0)
-            {
-              cmd_reply (client_fd, (const char *)&cfg + str_map[i].off);
-              return;
-            }
-        }
-
       for (int i = 0; col_map[i].name; i++)
         {
           if (strcmp (key, col_map[i].name) == 0)
@@ -3067,12 +3026,16 @@ static void
 on_destroy_notify (XEvent *ev)
 {
   Window wid = ev->xdestroywindow.window;
+  int was_float = set_contains (float_wins, n_float_wins, wid);
   set_remove (float_wins, &n_float_wins, wid);
   if (managed_find (wid) < 0)
     {
-      Node *tile = ws ()->active_tile;
-      if (tile && tile->tile.nwindows > 0)
-        focus_set_input (tile);
+      if (was_float)
+        {
+          Node *tile = ws ()->active_tile;
+          if (tile && tile->tile.nwindows > 0)
+            focus_set_input (tile);
+        }
       return;
     }
   unmanage_window (ev->xdestroywindow.window);
@@ -3084,13 +3047,17 @@ on_unmap_notify (XEvent *ev)
   if (ev->xunmap.send_event)
     return;
   Window wid = ev->xunmap.window;
+  int was_float = set_contains (float_wins, n_float_wins, wid);
   set_remove (float_wins, &n_float_wins, wid);
   int mi = managed_find (wid);
   if (mi < 0)
     {
-      Node *tile = ws ()->active_tile;
-      if (tile && tile->tile.nwindows > 0)
-        focus_set_input (tile);
+      if (was_float)
+        {
+          Node *tile = ws ()->active_tile;
+          if (tile && tile->tile.nwindows > 0)
+            focus_set_input (tile);
+        }
       return;
     }
 
@@ -3112,11 +3079,11 @@ on_unmap_notify (XEvent *ev)
       Node *tile = ws_find_tile (w, wid);
       if (tile)
         {
-			
+
           int idx = tile_index (tile, wid);
           if (idx == tile->tile.active_tab)
            {
-            unmanage_window (wid);  
+            unmanage_window (wid);
            }
         }
     }
@@ -3280,27 +3247,6 @@ on_key_press (XEvent *ev)
             const char *cmd = (cfg.binds[i].sarg && cfg.binds[i].sarg[0])
                                   ? cfg.binds[i].sarg
                                   : NULL;
-            if (!cmd)
-              {
-                switch (cfg.binds[i].iarg)
-                  {
-                  case 0:
-                    cmd = cfg.terminal_cmd;
-                    break;
-                  case 1:
-                    cmd = cfg.fm_cmd;
-                    break;
-                  case 2:
-                    cmd = cfg.www_cmd;
-                    break;
-                  case 3:
-                    cmd = cfg.launcher_cmd;
-                    break;
-                  case 4:
-                    cmd = cfg.reload_cmd;
-                    break;
-                  }
-              }
             if (cmd)
               spawn (cmd);
             break;
